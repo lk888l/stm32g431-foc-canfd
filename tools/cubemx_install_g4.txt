@@ -1,0 +1,3 @@
+swmgr refresh
+swmgr install stm32cube_g4_1.6.1 ask
+exit

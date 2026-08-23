@@ -1,0 +1,17 @@
+/build*/
+/cmake-build-*/
+/out/
+/staging/
+/tmp/
+*.elf
+*.hex
+*.bin
+*.map
+*.su
+*.d
+*.o
+*.a
+*.lst
+.cache/
+.vscode/
+.idea/

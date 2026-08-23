@@ -1,0 +1,236 @@
+# Create the production STM32G431CBU6 hardware description. STM32CubeMX's
+# headless interface cannot express DMA/NVIC/GPIO metadata reliably; the
+# configure-ioc action applies and validates that deterministic metadata after
+# this script exits.
+log ERROR
+load STM32G431C(6-8-B)Ux
+
+set mode RCC HSE-External-Oscillator
+set mode SYS Serial_Wire
+set mode SYS DisableDeadBatterySignals
+
+set mode ADC1 IN2-Single-Ended
+set mode ADC1 IN4-Single-Ended
+set mode ADC2 IN4-Single-Ended
+
+set mode TIM1 Internal
+set mode TIM1 "PWM Generation1 CH1 CH1N"
+set mode TIM1 "PWM Generation2 CH2 CH2N"
+set mode TIM1 "PWM Generation3 CH3 CH3N"
+set mode TIM1 "PWM Generation4 No Output"
+set mode TIM1 "Activate-Break-Input"
+set mode TIM2 Internal
+
+set mode FDCAN1 FDCAN_Activate
+set mode I2C1 I2C
+set mode SPI3 Full_Duplex_Master
+set mode IWDG IWDG_Activate
+
+# 8 MHz HSE / PLLM=2 / PLLN=85 / PLLR=2 -> 170 MHz.
+set ip parameters RCC HSE_VALUE 8000000
+set ip parameters RCC PLLSourceVirtual RCC_PLLSOURCE_HSE
+set ip parameters RCC PLLM RCC_PLLM_DIV2
+set ip parameters RCC PLLN 85
+set ip parameters RCC PLLP RCC_PLLP_DIV2
+set ip parameters RCC PLLQ RCC_PLLQ_DIV2
+set ip parameters RCC PLLR RCC_PLLR_DIV2
+set ip parameters RCC SYSCLKSource RCC_SYSCLKSOURCE_PLLCLK
+set ip parameters RCC AHBCLKDivider RCC_SYSCLK_DIV1
+set ip parameters RCC APB1CLKDivider RCC_HCLK_DIV1
+set ip parameters RCC APB2CLKDivider RCC_HCLK_DIV1
+set ip parameters RCC PWR_Regulator_Voltage_Scale PWR_REGULATOR_VOLTAGE_SCALE1_BOOST
+set ip parameters RCC ADC12CLockSelection RCC_ADC12CLKSOURCE_SYSCLK
+set ip parameters RCC FDCANCLockSelection RCC_FDCANCLKSOURCE_PCLK1
+set ip parameters RCC I2C1CLockSelection RCC_I2C1CLKSOURCE_PCLK1
+updateIpUI RCC
+clock resolution
+waitclock 2
+
+# ADC1 is the dual-ADC master. Its regular PA3/IN4 VBUS conversion uses two
+# consecutive same-channel ranks for the Rev-Z ES0431 section 2.5.8 workaround.
+# It stays on software trigger and is started by firmware only after JEOS;
+# firmware captures rank 1 and deliberately discards rank 2.
+# ADC1/ADC2 injected groups use dual simultaneous mode (not alternate trigger),
+# which is the ES0431 section 2.5.11-safe configuration.
+set ip parameters ADC1 ClockPrescaler ADC_CLOCK_SYNC_PCLK_DIV4
+set ip parameters ADC1 Mode ADC_DUALMODE_INJECSIMULT
+set ip parameters ADC1 DMAAccessMode ADC_DMAACCESSMODE_DISABLED
+set ip parameters ADC1 TwoSamplingDelay ADC_TWOSAMPLINGDELAY_1CYCLE
+set ip parameters ADC1 ScanConvMode ADC_SCAN_ENABLE
+set ip parameters ADC1 EOCSelection ADC_EOC_SEQ_CONV
+set ip parameters ADC1 EnableRegularConversion ENABLE
+set ip parameters ADC1 ExternalTrigConv ADC_SOFTWARE_START
+set ip parameters ADC1 ExternalTrigConvEdge ADC_EXTERNALTRIGCONVEDGE_NONE
+set ip parameters ADC1 ContinuousConvMode DISABLE
+set ip parameters ADC1 Overrun ADC_OVR_DATA_PRESERVED
+set ip parameters ADC1 NbrOfConversionFlag 2
+set ip parameters ADC1 "Rank-0#ChannelRegularConversion" 1
+set ip parameters ADC1 "Channel-0#ChannelRegularConversion" ADC_CHANNEL_4
+set ip parameters ADC1 "SamplingTime-0#ChannelRegularConversion" ADC_SAMPLETIME_47CYCLES_5
+set ip parameters ADC1 "SingleDiff-0#ChannelRegularConversion" ADC_SINGLE_ENDED
+set ip parameters ADC1 "OffsetNumber-0#ChannelRegularConversion" ADC_OFFSET_NONE
+set ip parameters ADC1 "Rank-1#ChannelRegularConversion" 2
+set ip parameters ADC1 "Channel-1#ChannelRegularConversion" ADC_CHANNEL_4
+set ip parameters ADC1 "SamplingTime-1#ChannelRegularConversion" ADC_SAMPLETIME_47CYCLES_5
+set ip parameters ADC1 "SingleDiff-1#ChannelRegularConversion" ADC_SINGLE_ENDED
+set ip parameters ADC1 "OffsetNumber-1#ChannelRegularConversion" ADC_OFFSET_NONE
+set ip parameters ADC1 EnableInjectedConversion ENABLE
+set ip parameters ADC1 InjNumberOfConversion 2
+set ip parameters ADC1 "InjectedRank-0#ChannelInjectedConversion" 1
+set ip parameters ADC1 "InjectedChannel-0#ChannelInjectedConversion" ADC_CHANNEL_2
+set ip parameters ADC1 "InjectedSamplingTime-0#ChannelInjectedConversion" ADC_SAMPLETIME_12CYCLES_5
+set ip parameters ADC1 "InjectedSingleDiff-0#ChannelInjectedConversion" ADC_SINGLE_ENDED
+set ip parameters ADC1 "InjectedOffsetNumber-0#ChannelInjectedConversion" ADC_OFFSET_NONE
+set ip parameters ADC1 "InjectedOffset-0#ChannelInjectedConversion" 0
+set ip parameters ADC1 "InjectedRank-1#ChannelInjectedConversion" 2
+set ip parameters ADC1 "InjectedChannel-1#ChannelInjectedConversion" ADC_CHANNEL_2
+set ip parameters ADC1 "InjectedSamplingTime-1#ChannelInjectedConversion" ADC_SAMPLETIME_12CYCLES_5
+set ip parameters ADC1 "InjectedSingleDiff-1#ChannelInjectedConversion" ADC_SINGLE_ENDED
+set ip parameters ADC1 "InjectedOffsetNumber-1#ChannelInjectedConversion" ADC_OFFSET_NONE
+set ip parameters ADC1 "InjectedOffset-1#ChannelInjectedConversion" 0
+set ip parameters ADC1 ExternalTrigInjecConv ADC_EXTERNALTRIGINJEC_T1_CC4
+set ip parameters ADC1 ExternalTrigInjecConvEdge ADC_EXTERNALTRIGINJECCONV_EDGE_RISING
+set ip parameters ADC1 AutoInjectedConv DISABLE
+set ip parameters ADC1 QueueInjectedContext DISABLE
+set ip parameters ADC1 InjectedDiscontinuousConvMode DISABLE
+
+# ADC2: PA7 phase-B injected slave. Both two-rank injected sequencers have the
+# same sample time; rank 1 is the ES0431 2.5.10 dummy and JDR2 is the usable
+# sample. CubeMX intentionally omits the slave external trigger in dual mode:
+# the ADC1 master trigger starts the simultaneous pair.
+set ip parameters ADC2 ClockPrescaler ADC_CLOCK_SYNC_PCLK_DIV4
+set ip parameters ADC2 ScanConvMode ADC_SCAN_ENABLE
+set ip parameters ADC2 EOCSelection ADC_EOC_SEQ_CONV
+set ip parameters ADC2 EnableRegularConversion DISABLE
+set ip parameters ADC2 EnableInjectedConversion ENABLE
+set ip parameters ADC2 InjNumberOfConversion 2
+set ip parameters ADC2 "InjectedRank-0#ChannelInjectedConversion" 1
+set ip parameters ADC2 "InjectedChannel-0#ChannelInjectedConversion" ADC_CHANNEL_4
+set ip parameters ADC2 "InjectedSamplingTime-0#ChannelInjectedConversion" ADC_SAMPLETIME_12CYCLES_5
+set ip parameters ADC2 "InjectedSingleDiff-0#ChannelInjectedConversion" ADC_SINGLE_ENDED
+set ip parameters ADC2 "InjectedOffsetNumber-0#ChannelInjectedConversion" ADC_OFFSET_NONE
+set ip parameters ADC2 "InjectedOffset-0#ChannelInjectedConversion" 0
+set ip parameters ADC2 "InjectedRank-1#ChannelInjectedConversion" 2
+set ip parameters ADC2 "InjectedChannel-1#ChannelInjectedConversion" ADC_CHANNEL_4
+set ip parameters ADC2 "InjectedSamplingTime-1#ChannelInjectedConversion" ADC_SAMPLETIME_12CYCLES_5
+set ip parameters ADC2 "InjectedSingleDiff-1#ChannelInjectedConversion" ADC_SINGLE_ENDED
+set ip parameters ADC2 "InjectedOffsetNumber-1#ChannelInjectedConversion" ADC_OFFSET_NONE
+set ip parameters ADC2 "InjectedOffset-1#ChannelInjectedConversion" 0
+set ip parameters ADC2 ExternalTrigInjecConv ADC_EXTERNALTRIGINJEC_T1_CC4
+set ip parameters ADC2 ExternalTrigInjecConvEdge ADC_EXTERNALTRIGINJECCONV_EDGE_RISING
+set ip parameters ADC2 AutoInjectedConv DISABLE
+set ip parameters ADC2 QueueInjectedContext DISABLE
+set ip parameters ADC2 InjectedDiscontinuousConvMode DISABLE
+
+# 20 kHz center-aligned complementary PWM. CH4 PWM2 creates one rising
+# sampling edge at tick 4164. With the two-rank injected sequence, the usable
+# rank-2 aperture is centered around the carrier crest and stays clear of the
+# maximum-duty phase edge. 4164 = 4250 - (340 / 4) - 1.
+set ip parameters TIM1 Prescaler 0
+set ip parameters TIM1 CounterMode TIM_COUNTERMODE_CENTERALIGNED1
+set ip parameters TIM1 PeriodNoDither 4249
+set ip parameters TIM1 ClockDivision TIM_CLOCKDIVISION_DIV1
+set ip parameters TIM1 RepetitionCounter 0
+set ip parameters TIM1 AutoReloadPreload TIM_AUTORELOAD_PRELOAD_ENABLE
+set ip parameters TIM1 "PulseNoDither_1-PWM Generation1 CH1 CH1N" 2125
+set ip parameters TIM1 "PulseNoDither_2-PWM Generation2 CH2 CH2N" 2125
+set ip parameters TIM1 "PulseNoDither_3-PWM Generation3 CH3 CH3N" 2125
+set ip parameters TIM1 "PulseNoDither_4-PWM Generation4 No Output" 4164
+set ip parameters TIM1 "OCMode_PWM-PWM Generation4 No Output" TIM_OCMODE_PWM2
+set ip parameters TIM1 DeadTime 34
+set ip parameters TIM1 OffStateRunMode TIM_OSSR_ENABLE
+set ip parameters TIM1 OffStateIDLEMode TIM_OSSI_ENABLE
+set ip parameters TIM1 BreakState TIM_BREAK_ENABLE
+set ip parameters TIM1 BreakPolarity TIM_BREAKPOLARITY_LOW
+set ip parameters TIM1 BreakFilter 4
+set ip parameters TIM1 BreakAFMode TIM_BREAK_AFMODE_INPUT
+set ip parameters TIM1 AutomaticOutput TIM_AUTOMATICOUTPUT_DISABLE
+
+# TIM2 is a free-running 1 MHz 32-bit microsecond timebase.
+set ip parameters TIM2 Prescaler 169
+set ip parameters TIM2 CounterMode TIM_COUNTERMODE_UP
+set ip parameters TIM2 PeriodNoDither 4294967295
+set ip parameters TIM2 ClockDivision TIM_CLOCKDIVISION_DIV1
+set ip parameters TIM2 AutoReloadPreload TIM_AUTORELOAD_PRELOAD_DISABLE
+
+# FDCAN: 500 kbit/s nominal and 2 Mbit/s data phase at 170 MHz, FD+BRS.
+set ip parameters FDCAN1 ClockDivider FDCAN_CLOCK_DIV1
+set ip parameters FDCAN1 FrameFormat FDCAN_FRAME_FD_BRS
+set ip parameters FDCAN1 Mode FDCAN_MODE_NORMAL
+set ip parameters FDCAN1 AutoRetransmission ENABLE
+set ip parameters FDCAN1 TransmitPause ENABLE
+set ip parameters FDCAN1 ProtocolException DISABLE
+set ip parameters FDCAN1 NominalPrescaler 10
+set ip parameters FDCAN1 NominalSyncJumpWidth 4
+set ip parameters FDCAN1 NominalTimeSeg1 27
+set ip parameters FDCAN1 NominalTimeSeg2 6
+set ip parameters FDCAN1 DataPrescaler 5
+set ip parameters FDCAN1 DataSyncJumpWidth 3
+set ip parameters FDCAN1 DataTimeSeg1 13
+set ip parameters FDCAN1 DataTimeSeg2 3
+set ip parameters FDCAN1 StdFiltersNbr 8
+set ip parameters FDCAN1 ExtFiltersNbr 4
+set ip parameters FDCAN1 TxFifoQueueMode FDCAN_TX_FIFO_OPERATION
+
+# I2C encoder fallback and MT6701 SSI/SPI encoder bus.
+set ip parameters I2C1 CustomTiming Enabled
+set ip parameters I2C1 Timing 0x00F02B86
+set ip parameters I2C1 Analog_Filter I2C_ANALOGFILTER_ENABLE
+set ip parameters I2C1 I2C_Coeff_DF 0
+set ip parameters I2C1 AddressingMode I2C_ADDRESSINGMODE_7BIT
+set ip parameters I2C1 DualAddressMode I2C_DUALADDRESS_DISABLE
+set ip parameters I2C1 GeneralCallMode I2C_GENERALCALL_DISABLE
+set ip parameters I2C1 NoStretchMode I2C_NOSTRETCH_DISABLE
+
+set ip parameters SPI3 Mode SPI_MODE_MASTER
+set ip parameters SPI3 Direction SPI_DIRECTION_2LINES
+set ip parameters SPI3 DataSize SPI_DATASIZE_8BIT
+set ip parameters SPI3 CLKPolarity SPI_POLARITY_HIGH
+set ip parameters SPI3 CLKPhase SPI_PHASE_1EDGE
+set ip parameters SPI3 NSS SPI_NSS_SOFT
+set ip parameters SPI3 BaudRatePrescaler SPI_BAUDRATEPRESCALER_32
+set ip parameters SPI3 FirstBit SPI_FIRSTBIT_MSB
+set ip parameters SPI3 TIMode SPI_TIMODE_DISABLE
+set ip parameters SPI3 CRCCalculation SPI_CRCCALCULATION_DISABLE
+set ip parameters SPI3 CRCPolynomial 7
+set ip parameters SPI3 CRCLength SPI_CRC_LENGTH_DATASIZE
+set ip parameters SPI3 NSSPMode SPI_NSS_PULSE_DISABLE
+
+set ip parameters IWDG Prescaler IWDG_PRESCALER_32
+set ip parameters IWDG Window 4095
+set ip parameters IWDG Reload 99
+
+# Fixed production pin contract.
+set pin PA8 TIM1_CH1
+set pin PA9 TIM1_CH2
+set pin PA10 TIM1_CH3
+set pin PB13 TIM1_CH1N
+set pin PB14 TIM1_CH2N
+set pin PB15 TIM1_CH3N
+set pin PA15 TIM1_BKIN
+set pin PA1 ADC1_IN2
+set pin PA3 ADC1_IN4
+set pin PA7 ADC2_IN4
+set pin PA11 FDCAN1_RX
+set pin PA12 FDCAN1_TX
+set pin PB7 I2C1_SDA
+set pin PC10 SPI3_SCK
+set pin PC11 SPI3_MISO
+set pin PB5 SPI3_MOSI
+set pin PB3 GPIO_Output
+set pin PB4 GPIO_Output
+set pin PB10 GPIO_Output
+set pin PB11 GPIO_Output
+set pin PB12 GPIO_Output
+set pin PC13 GPIO_Output
+set pin PA13 SYS_JTMS-SWDIO
+set pin PA14 SYS_JTCK-SWCLK
+# CubeMX 6.16 headless cannot move I2C1_SCL from its transient PA13 default.
+# The wrapper adds PB6/I2C1_SCL deterministically before reload/check.
+
+project name brushless_control
+project toolchain CMake
+project compiler gcc
+project couplefilesbyip 1
+config saveext "@IOC@"
+exit

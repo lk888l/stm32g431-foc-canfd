@@ -1,0 +1,6 @@
+log ERROR
+config load "@IOC@"
+check mcu modes
+isPluginError "Clock Configuration"
+isPluginError "Pinout & Configuration"
+exit

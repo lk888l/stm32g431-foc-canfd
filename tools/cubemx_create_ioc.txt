@@ -1,0 +1,10 @@
+# Create a loadable STM32G431CBU6 project description only.
+# This script does not install firmware packages, accept licences, or generate code.
+load STM32G431C(6-8-B)Ux
+project name brushless_control
+project path D:/kk/stm32/stm32_Cmake_Project/brushless_control
+project toolchain CMake
+project compiler gcc
+project couplefilesbyip 1
+project save
+exit

@@ -1,0 +1,10 @@
+config load @IOC@
+project path @PROJECT_ROOT@/staging/cubemx
+project name brushless_control
+project toolchain CMake
+project compiler gcc
+project couplefilesbyip 1
+SetStructure Advanced
+SetCopyLibrary "copy only"
+project generate
+exit

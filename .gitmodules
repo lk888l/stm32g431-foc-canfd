@@ -1,0 +1,12 @@
+[submodule "Drivers/STM32G4xx_HAL_Driver"]
+	path = Drivers/STM32G4xx_HAL_Driver
+	url = https://github.com/STMicroelectronics/stm32g4xx-hal-driver.git
+[submodule "Drivers/CMSIS/Device/ST/STM32G4xx"]
+	path = Drivers/CMSIS/Device/ST/STM32G4xx
+	url = https://github.com/STMicroelectronics/cmsis-device-g4.git
+[submodule "Drivers/CMSIS/Core"]
+	path = Drivers/CMSIS/Core
+	url = https://github.com/ARM-software/CMSIS_5.git
+[submodule "Middlewares/Third_Party/CANopenNode"]
+	path = Middlewares/Third_Party/CANopenNode
+	url = https://github.com/CANopenNode/CANopenNode.git

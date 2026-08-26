@@ -24,7 +24,7 @@ set(BRUSHLESS_BOARD_PROFILE "PRODUCTION" CACHE STRING
     "Motor-control hardware profile: PRODUCTION or LAB")
 set_property(CACHE BRUSHLESS_BOARD_PROFILE PROPERTY STRINGS PRODUCTION LAB)
 option(BRUSHLESS_USE_8MHZ_HSE
-    "Use the production 8 MHz crystal required for robust CAN-FD timing" ON)
+    "Use the validated 8 MHz crystal and 170 MHz system-clock configuration" ON)
 
 string(TOUPPER "${BRUSHLESS_BOARD_PROFILE}" _brushless_board_profile)
 if(NOT _brushless_board_profile STREQUAL "PRODUCTION" AND
@@ -37,9 +37,11 @@ set(BRUSHLESS_PORTABLE_SOURCES
     App/control/angle_pll.c
     App/control/control_pi.c
     App/control/control_trajectory.c
+    App/control/encoder_plausibility.c
     App/control/foc_math.c
     App/control/mit_controller.c
     App/motor/encoder_tracker.c
+    App/motor/lab_commissioning.c
     App/motor/motor_foc.c
     App/drive/drive_mode.c
     App/drive/drive_pds.c
@@ -200,7 +202,11 @@ if(BRUSHLESS_BUILD_FIRMWARE)
 
     target_link_libraries(brushless_control PRIVATE brushless_portable m)
     target_compile_features(brushless_control PRIVATE c_std_11)
-    target_compile_definitions(brushless_control PRIVATE USE_HAL_DRIVER STM32G431xx)
+    target_compile_definitions(brushless_control PRIVATE
+        USE_HAL_DRIVER
+        STM32G431xx
+        $<$<CONFIG:Debug>:BRUSHLESS_DEBUG_BUILD=1>
+    )
     if(_brushless_board_profile STREQUAL "PRODUCTION")
         target_compile_definitions(brushless_control PRIVATE
             BOARD_PROFILE=BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701)
@@ -212,8 +218,8 @@ if(BRUSHLESS_BUILD_FIRMWARE)
         target_compile_definitions(brushless_control PRIVATE BOARD_USE_8MHZ_HSE=1)
     else()
         message(FATAL_ERROR
-            "CAN-FD is enabled in every firmware profile and requires "
-            "BRUSHLESS_USE_8MHZ_HSE=ON for release-qualified clock accuracy")
+            "Every current firmware profile uses the validated 8 MHz HSE/170 MHz "
+            "clock configuration; BRUSHLESS_USE_8MHZ_HSE must remain ON")
     endif()
     target_include_directories(brushless_control PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/App/canopen

@@ -17,6 +17,8 @@
 #include "encoder_as5600.h"
 #include "encoder_mt6701.h"
 #include "encoder_tracker.h"
+#include "lab_commissioning.h"
+#include "lab_stlink.h"
 #include "mit_controller.h"
 #include "motor_foc.h"
 
@@ -26,10 +28,19 @@
 #define APP_SUPERVISOR_PERIOD_S (1.0f / (float)BOARD_SUPERVISOR_FREQUENCY_HZ)
 #define APP_SUPERVISOR_DIVIDER \
     (BOARD_CONTROL_FREQUENCY_HZ / BOARD_SUPERVISOR_FREQUENCY_HZ)
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+#define APP_STARTUP_SENSOR_GRACE_US 250000UL
+#else
 #define APP_STARTUP_SENSOR_GRACE_US 100000UL
+#endif
 #define APP_FEEDBACK_PERIOD_US 2000UL
 #define APP_BUS_SAMPLE_PERIOD_US 10000UL
 #define APP_ENCODER_SAMPLE_PERIOD_US_LAB 1000UL
+#define APP_ENCODER_REPROBE_PERIOD_US_LAB 100000UL
+#define APP_ENCODER_DIAGNOSTIC_PERIOD_US_LAB 20000UL
+#define APP_LAB_MAILBOX_SETTLE_US 100000UL
+#define APP_LAB_INITIAL_QUIESCE_US 250000UL
+#define APP_LAB_MAX_CONSECUTIVE_BUS_ERRORS 3U
 #define APP_CURRENT_LOOP_STALE_US 500UL
 #define APP_SUPERVISOR_LOOP_STALE_US 5000UL
 #define APP_TIM2_STALE_US 2000UL
@@ -51,6 +62,9 @@ typedef struct {
     encoder_tracker_t position_tracker;
     encoder_mt6701_t mt6701;
     encoder_as5600_t as5600;
+    lab_commissioning_t lab_commissioning;
+    lab_commissioning_output_t lab_output;
+    lab_commissioning_request_t lab_pending_request;
     control_pi_t speed_pi;
     control_trajectory_state_t trajectory;
     control_trajectory_limits_t trajectory_limits;
@@ -67,6 +81,7 @@ typedef struct {
     motor_vendor_feedback_limits_t vendor_feedback_limits;
     motor_vendor_feedback_t feedback_frame;
     encoder_sample_t pending_encoder;
+    encoder_sample_t last_encoder_sample;
     bool pending_encoder_valid;
     bool encoder_driver_initialized;
     bool pending_watchdog_reload;
@@ -74,6 +89,7 @@ typedef struct {
     uint32_t fast_fault_events;
     uint32_t boot_timestamp_us;
     uint32_t last_encoder_poll_us;
+    uint32_t last_encoder_diagnostic_us;
     uint32_t last_bus_sample_us;
     uint32_t last_feedback_tx_us;
     uint32_t last_canopen_background_us;
@@ -88,17 +104,33 @@ typedef struct {
     uint32_t monitor_tim2_us;
     volatile uint32_t current_completion_count;
     volatile uint32_t supervisor_completion_count;
+    volatile uint32_t lab_max_encoder_age_us;
     uint32_t supervisor_divider;
     uint16_t previous_safety_controlword;
     uint16_t last_command_sequence;
     uint16_t feedback_sequence;
     uint16_t last_od_mit_sequence;
+    uint32_t lab_mailbox_sequence;
+    uint32_t lab_applied_sequence;
+    uint32_t lab_pending_sequence;
+    uint32_t lab_pending_since_us;
+    uint32_t lab_trace_last_sample_us;
+    uint32_t lab_trace_last_state;
     uint8_t previous_vendor_flags;
+    uint8_t lab_encoder_bus_error_count;
     float mit_command_current_limit_a;
     float last_position_rad;
+    float encoder_direction_runtime;
     volatile bool current_loop_seen;
     volatile bool supervisor_loop_seen;
+    volatile bool lab_output_was_enabled;
+    volatile bool lab_encoder_age_tracking_complete;
     bool realtime_monitor_started;
+    bool lab_pending_request_valid;
+    bool lab_command_seen;
+    bool lab_encoder_sample_seen;
+    bool lab_encoder_bus_quiesced;
+    bool lab_trace_terminal_captured;
     bool initialized;
 } app_state_t;
 
@@ -231,9 +263,14 @@ static bool configure_motor(void)
 #if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
     config.strategy = MOTOR_FOC_CURRENT_CLOSED_LOOP;
     config.encoder_stale_timeout_us = BOARD_ENCODER_STALE_US_PRODUCTION;
+    config.direct_encoder_angle_for_commutation = false;
 #else
     config.strategy = MOTOR_FOC_LAB_VOLTAGE_LOOP;
     config.encoder_stale_timeout_us = BOARD_ENCODER_STALE_US_LAB;
+    /* The AS5600's fresh angle is the commutation source. The Lab PLL is a
+     * speed filter only, so reducing its bandwidth cannot rotate q voltage
+     * away from the actual rotor axis during a quick low-speed step. */
+    config.direct_encoder_angle_for_commutation = true;
 #endif
     config.control_period_s = APP_CONTROL_PERIOD_S;
     config.pole_pairs = BOARD_MOTOR_POLE_PAIRS;
@@ -270,8 +307,19 @@ static bool configure_motor(void)
     config.d_current_pi.max_timestep_s = APP_CONTROL_PERIOD_S * 1.25f;
     config.q_current_pi = config.d_current_pi;
 
+#if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
     config.angle_pll.proportional_gain_per_s = 400.0f;
     config.angle_pll.integral_gain_per_s2 = 40000.0f;
+#else
+    /* The weak-field AS5600 bench signal advances in coarse low-speed
+     * steps. A lower Lab-only observer bandwidth avoids turning each step
+     * into a full-scale speed impulse; the MT6701 production path keeps its
+     * original high-bandwidth gains above. */
+    config.angle_pll.proportional_gain_per_s =
+        BOARD_LAB_ANGLE_PLL_KP_PER_S;
+    config.angle_pll.integral_gain_per_s2 =
+        BOARD_LAB_ANGLE_PLL_KI_PER_S2;
+#endif
     config.angle_pll.maximum_speed_rad_s = BOARD_ANGLE_PLL_MAX_SPEED_RAD_S;
     config.angle_pll.max_timestep_s = 0.010f;
     return motor_foc_init(&app.motor, &config);
@@ -281,8 +329,13 @@ static bool configure_outer_control(void)
 {
     control_pi_config_t speed = {0};
 
+#if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
     speed.proportional_gain = BOARD_SPEED_KP_A_PER_RAD_S;
     speed.integral_gain_per_s = BOARD_SPEED_KI_A_PER_RAD;
+#else
+    speed.proportional_gain = BOARD_LAB_SPEED_KP_V_PER_RAD_S;
+    speed.integral_gain_per_s = BOARD_LAB_SPEED_KI_V_PER_RAD;
+#endif
     speed.anti_windup_gain_per_s = 50.0f;
 #if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
     speed.output_min = -BOARD_MOTOR_PEAK_CURRENT_A;
@@ -290,10 +343,10 @@ static bool configure_outer_control(void)
     speed.integrator_min = -BOARD_MOTOR_PEAK_CURRENT_A;
     speed.integrator_max = BOARD_MOTOR_PEAK_CURRENT_A;
 #else
-    speed.output_min = -3.0f;
-    speed.output_max = 3.0f;
-    speed.integrator_min = -3.0f;
-    speed.integrator_max = 3.0f;
+    speed.output_min = -BOARD_LAB_MAX_VOLTAGE_V;
+    speed.output_max = BOARD_LAB_MAX_VOLTAGE_V;
+    speed.integrator_min = -BOARD_LAB_MAX_VOLTAGE_V;
+    speed.integrator_max = BOARD_LAB_MAX_VOLTAGE_V;
 #endif
     speed.max_timestep_s = APP_SUPERVISOR_PERIOD_S * 1.5f;
     if (!control_pi_init(&app.speed_pi, &speed) ||
@@ -410,11 +463,44 @@ static bool configure_transport(void)
     app.vendor_feedback_limits.maximum_bus_voltage_uq16_16 =
         float_to_uq16(BOARD_BUS_OVERVOLTAGE_V * 1.2f);
 
+#if BOARD_CAN_ENABLED
     return canfd_transport_init(&hfdcan1,
                                 BOARD_MIT_COMMAND_EXT_ID,
                                 BOARD_MIT_FEEDBACK_EXT_ID,
                                 &app.vendor_command_limits);
+#else
+    return true;
+#endif
 }
+
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+static bool configure_lab_commissioning(void)
+{
+    lab_commissioning_config_t config = {0};
+
+    config.pole_pairs = BOARD_MOTOR_POLE_PAIRS;
+    config.minimum_alignment_voltage_v = BOARD_LAB_MIN_ALIGNMENT_V;
+    config.maximum_voltage_v = BOARD_LAB_MAX_VOLTAGE_V;
+    config.maximum_velocity_rad_s = BOARD_LAB_MAX_VELOCITY_RAD_S;
+    config.maximum_open_loop_voltage_v =
+        BOARD_LAB_MAX_OPEN_LOOP_VOLTAGE_V;
+    config.maximum_open_loop_electrical_velocity_rad_s =
+        BOARD_LAB_MAX_OPEN_LOOP_ELECTRICAL_RAD_S;
+    config.maximum_abs_position_rad = BOARD_LAB_MAX_ABS_POSITION_RAD;
+    config.encoder_wait_timeout_us = BOARD_LAB_ENCODER_WAIT_TIMEOUT_US;
+    config.align_zero_time_us = BOARD_LAB_ALIGN_ZERO_TIME_US;
+    config.align_quadrature_time_us =
+        BOARD_LAB_ALIGN_QUADRATURE_TIME_US;
+    config.align_return_time_us = BOARD_LAB_ALIGN_RETURN_TIME_US;
+    config.maximum_alignment_repeat_error_rad =
+        BOARD_LAB_MAX_ALIGNMENT_REPEAT_ERROR_RAD;
+    config.default_run_time_us = BOARD_LAB_DEFAULT_RUN_TIME_US;
+    config.maximum_run_time_us = BOARD_LAB_MAX_RUN_TIME_US;
+    config.maximum_open_loop_run_time_us =
+        BOARD_LAB_MAX_OPEN_LOOP_RUN_TIME_US;
+    return lab_commissioning_init(&app.lab_commissioning, &config);
+}
+#endif
 
 static bool initialize_encoder_driver(void)
 {
@@ -424,19 +510,50 @@ static bool initialize_encoder_driver(void)
                                ENCODER_CS_GPIO_Port,
                                ENCODER_CS_Pin);
 #else
-    return encoder_as5600_init(&app.as5600, &hi2c1, true);
+    return encoder_as5600_init_gpio(&app.as5600,
+                                    &hi2c1,
+                                    GPIOB,
+                                    GPIO_PIN_6,
+                                    GPIOB,
+                                    GPIO_PIN_7,
+                                    true);
 #endif
 }
 
 void app_init(void)
 {
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    float retained_encoder_direction;
+    float retained_electrical_zero;
+#endif
+
     memset(&app, 0, sizeof(app));
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    lab_stlink_initialize_retention(bsp_lab_retention_allowed());
+#endif
+    app.encoder_direction_runtime = BOARD_ENCODER_DIRECTION;
     app.boot_timestamp_us = bsp_micros();
     app.last_canopen_background_us = app.boot_timestamp_us;
     if (!configure_motor() || !configure_outer_control() ||
         !configure_drive() || !configure_transport()) {
         Error_Handler();
     }
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    if (!configure_lab_commissioning()) {
+        Error_Handler();
+    }
+    if (lab_stlink_load_calibration(&retained_encoder_direction,
+                                    &retained_electrical_zero) &&
+        motor_foc_set_electrical_calibration(&app.motor,
+                                             retained_encoder_direction,
+                                             retained_electrical_zero,
+                                             true) &&
+        lab_commissioning_restore_calibration(&app.lab_commissioning,
+                                              retained_encoder_direction,
+                                              retained_electrical_zero)) {
+        app.encoder_direction_runtime = retained_encoder_direction;
+    }
+#endif
     app.encoder_driver_initialized = initialize_encoder_driver();
 #if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
     if (app.encoder_driver_initialized) {
@@ -448,14 +565,17 @@ void app_init(void)
     motor_foc_set_bus_voltage(&app.motor, BOARD_BUS_NOMINAL_V, true);
 #endif
     app.initialized = true;
+#if BOARD_CAN_ENABLED
     if (!canopen_classic_init(&hfdcan1,
                               BOARD_CANOPEN_NODE_ID,
                               (uint16_t)(BOARD_CAN_NOMINAL_BITRATE / 1000UL))) {
         app.initialized = false;
         Error_Handler();
     }
+#endif
 }
 
+#if BOARD_CAN_ENABLED
 static void accept_vendor_command(const motor_vendor_command_t *command)
 {
     const motor_foc_feedback_t *feedback;
@@ -537,14 +657,17 @@ static void accept_vendor_command(const motor_vendor_command_t *command)
     drive_safety_note_valid_command(&app.safety,
                                     command->local_rx_timestamp_us);
 }
+#endif
 
 static void consume_external_inputs(uint32_t now_us)
 {
+#if BOARD_CAN_ENABLED
     motor_vendor_command_t command;
 
     if (canfd_transport_take_command(&command)) {
         accept_vendor_command(&command);
     }
+#endif
     if (app.pending_watchdog_reload) {
         drive_safety_note_valid_command(&app.safety,
                                         app.pending_watchdog_timestamp_us);
@@ -553,6 +676,12 @@ static void consume_external_inputs(uint32_t now_us)
     if (app.pending_encoder_valid) {
         const encoder_sample_t sample = app.pending_encoder;
         app.pending_encoder_valid = false;
+        app.last_encoder_sample = sample;
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+        if (sample.valid) {
+            app.lab_encoder_sample_seen = true;
+        }
+#endif
         const uint32_t primask = critical_enter();
         if (sample.valid) {
             (void)encoder_tracker_update(&app.position_tracker,
@@ -595,7 +724,9 @@ static uint32_t collect_faults(const motor_foc_feedback_t *feedback,
 {
     uint32_t faults;
     const uint32_t uptime = now_us - app.boot_timestamp_us;
+#if BOARD_CAN_ENABLED
     const canfd_transport_stats_t can_stats = canfd_transport_stats();
+#endif
 
     {
         const uint32_t primask = critical_enter();
@@ -616,7 +747,11 @@ static uint32_t collect_faults(const motor_foc_feedback_t *feedback,
         faults |= DRIVE_FAULT_CONTROL_DEADLINE;
     }
     if ((uptime > APP_STARTUP_SENSOR_GRACE_US) &&
-        !feedback->encoder_valid) {
+        !feedback->encoder_valid
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+        && !app.lab_encoder_bus_quiesced
+#endif
+    ) {
         faults |= DRIVE_FAULT_POSITION_FEEDBACK;
     }
     if (fabsf(feedback->mechanical_velocity_rad_s) >
@@ -640,9 +775,11 @@ static uint32_t collect_faults(const motor_foc_feedback_t *feedback,
             faults |= DRIVE_FAULT_DC_UNDERVOLTAGE;
         }
     }
+#if BOARD_CAN_ENABLED
     if (can_stats.bus_off) {
         faults |= DRIVE_FAULT_CAN_BUS_OFF;
     }
+#endif
     if (mode->mode_change_rejected || mode->pp_setpoint_rejected) {
         faults |= DRIVE_FAULT_PROTOCOL;
     }
@@ -674,18 +811,57 @@ static void update_dynamic_trajectory_limits(void)
 
 static float speed_loop(float target_velocity,
                         float actual_velocity,
-                        uint16_t torque_limit_q15)
+                        uint16_t torque_limit_q15,
+                        float low_speed_feedforward_limit,
+                        float low_speed_feedforward_fade_speed,
+                        float low_speed_feedforward_minimum_scale)
 {
     control_pi_result_t result;
+    float feed_forward = 0.0f;
     const float derate =
         (float)torque_limit_q15 / (float)DRIVE_SAFETY_FULL_TORQUE_Q15;
 
     target_velocity = clampf_local(target_velocity,
                                    -BOARD_MAX_PROFILE_SPEED_RAD_S,
                                    BOARD_MAX_PROFILE_SPEED_RAD_S);
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    {
+        const float target_magnitude = fabsf(target_velocity);
+
+        if ((target_magnitude > 0.0f) &&
+            (low_speed_feedforward_limit > 0.0f) &&
+            (low_speed_feedforward_fade_speed > 0.0f)) {
+            const float direction = (target_velocity > 0.0f) ? 1.0f : -1.0f;
+            const float speed_fade = 1.0f - clampf_local(
+                fabsf(actual_velocity) / low_speed_feedforward_fade_speed,
+                0.0f,
+                1.0f);
+            const float target_scale = clampf_local(
+                fmaxf(target_magnitude /
+                          BOARD_LAB_STICTION_FULL_TARGET_RAD_S,
+                      low_speed_feedforward_minimum_scale),
+                0.0f,
+                1.0f);
+
+            /* Voltage-mode Lab hardware has no current feedback. A bounded,
+             * smooth low-speed term supplies measured breakaway voltage
+             * without leaving integral energy behind. Fade it on absolute
+             * speed: when the rotor is already moving away from the target,
+             * the PI provides damping without a full opposite-polarity kick.
+             * The term is excluded from Production. */
+            feed_forward =
+                direction * low_speed_feedforward_limit *
+                speed_fade * target_scale;
+        }
+    }
+#else
+    (void)low_speed_feedforward_limit;
+    (void)low_speed_feedforward_fade_speed;
+    (void)low_speed_feedforward_minimum_scale;
+#endif
     if (!control_pi_step(&app.speed_pi,
                          target_velocity - actual_velocity,
-                         0.0f,
+                         feed_forward,
                          APP_SUPERVISOR_PERIOD_S,
                          &result)) {
         latch_fault_event(DRIVE_FAULT_CONTROL_DEADLINE);
@@ -725,7 +901,10 @@ static motor_foc_command_t compute_motion_command(
         if (motion_step_ok) {
             effort = speed_loop(app.trajectory.velocity_rad_s,
                                 feedback->mechanical_velocity_rad_s,
-                                app.safety_output.torque_limit_q15);
+                                app.safety_output.torque_limit_q15,
+                                0.0f,
+                                0.0f,
+                                0.0f);
         }
     } else if (app.mode_output.mode_display ==
                (int8_t)DRIVE_MODE_PROFILE_POSITION) {
@@ -744,7 +923,10 @@ static motor_foc_command_t compute_motion_command(
                                       actual_position_rad);
             effort = speed_loop(velocity_reference,
                                 feedback->mechanical_velocity_rad_s,
-                                app.safety_output.torque_limit_q15);
+                                app.safety_output.torque_limit_q15,
+                                0.0f,
+                                0.0f,
+                                0.0f);
         }
     } else if (app.mode_output.mode_display ==
                (int8_t)DRIVE_MODE_PROFILE_VELOCITY) {
@@ -758,7 +940,10 @@ static motor_foc_command_t compute_motion_command(
         if (motion_step_ok) {
             effort = speed_loop(app.trajectory.velocity_rad_s,
                                 feedback->mechanical_velocity_rad_s,
-                                app.safety_output.torque_limit_q15);
+                                app.safety_output.torque_limit_q15,
+                                0.0f,
+                                0.0f,
+                                0.0f);
         }
     } else if (app.mode_output.mit_control_enabled) {
         control_mit_feedback_t mit_feedback;
@@ -852,6 +1037,357 @@ static void publish_feedback(const motor_foc_feedback_t *feedback,
     app.feedback_frame = frame;
 }
 
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+static lab_commissioning_input_t lab_input_from_feedback(
+    const motor_foc_feedback_t *feedback,
+    float position_rad,
+    uint32_t now_us,
+    uint32_t sensed_faults)
+{
+    lab_commissioning_input_t input = {0};
+
+    input.now_us = now_us;
+    input.raw_mechanical_angle_rad =
+        app.last_encoder_sample.mechanical_angle_rad;
+    input.directed_position_rad = position_rad;
+    input.mechanical_velocity_rad_s =
+        feedback->mechanical_velocity_rad_s;
+    input.encoder_valid = feedback->encoder_valid;
+    input.electrical_calibration_valid =
+        feedback->electrical_calibration_valid;
+    /* Encoder validity has a dedicated state-machine interlock. Keeping the
+     * position bit out of the generic safety aggregate lets the explicitly
+     * encoderless OpenLoop diagnostic run while every other fault remains
+     * fatal; all closed-loop/alignment states still check encoder_valid. */
+    input.safety_fault_active =
+        (((sensed_faults | app.safety_output.latched_faults) &
+          ~DRIVE_FAULT_POSITION_FEEDBACK) != 0U);
+    return input;
+}
+
+static void submit_lab_mailbox_if_pending(
+    const lab_commissioning_input_t *input)
+{
+    lab_commissioning_request_t request;
+    uint32_t accepted_sequence;
+
+    if (lab_stlink_take_request(&app.lab_mailbox_sequence,
+                                &request,
+                                &accepted_sequence)) {
+        app.lab_command_seen = true;
+        app.lab_pending_request = request;
+        app.lab_pending_sequence = accepted_sequence;
+        app.lab_pending_since_us = input->now_us;
+        app.lab_pending_request_valid = true;
+    }
+    if (!app.lab_pending_request_valid ||
+        ((input->now_us - app.lab_pending_since_us) <
+         APP_LAB_MAILBOX_SETTLE_US)) {
+        return;
+    }
+
+    /* ST-LINK Utility 3.6 may reset the target after a RAM write.  Holding
+     * every request disarmed for 100 ms lets that reset happen first.  Only
+     * the stable post-reset instance clears the NOLOAD commit word and is
+     * therefore allowed to submit a one-shot motion request. */
+    if (lab_stlink_consume_request(app.lab_pending_sequence)) {
+        app.lab_applied_sequence = app.lab_pending_sequence;
+        lab_stlink_trace_reset(app.lab_applied_sequence);
+        app.lab_trace_last_sample_us =
+            input->now_us - LAB_STLINK_TRACE_PERIOD_US;
+        app.lab_trace_last_state = UINT32_MAX;
+        app.lab_trace_terminal_captured = false;
+        app.lab_max_encoder_age_us = 0U;
+        app.lab_output_was_enabled = false;
+        app.lab_encoder_age_tracking_complete = false;
+        (void)lab_commissioning_submit(&app.lab_commissioning,
+                                       &app.lab_pending_request,
+                                       input);
+    }
+    app.lab_pending_request_valid = false;
+}
+
+static motor_foc_command_t compute_lab_motor_command(
+    const lab_commissioning_output_t *lab_output,
+    const motor_foc_feedback_t *feedback,
+    float position_rad)
+{
+    motor_foc_command_t command = {0};
+    float effort = 0.0f;
+    bool speed_controller_active = false;
+
+    if ((lab_output == NULL) || (feedback == NULL)) {
+        return command;
+    }
+    if (!lab_output->drive_enable) {
+        (void)control_pi_reset(&app.speed_pi, 0.0f, 0.0f);
+        return command;
+    }
+    command.enable = true;
+    if (lab_output->fixed_stator_voltage) {
+        command.lab_fixed_stator_voltage = true;
+        command.lab_alpha_voltage_v =
+            lab_output->stator_voltage_v *
+            cosf(lab_output->stator_electrical_angle_rad);
+        command.lab_beta_voltage_v =
+            lab_output->stator_voltage_v *
+            sinf(lab_output->stator_electrical_angle_rad);
+        return command;
+    }
+
+    if (lab_output->state == LAB_COMMISSIONING_STATE_RUN_VOLTAGE) {
+        effort = lab_output->q_voltage_v;
+    } else if (lab_output->state ==
+               LAB_COMMISSIONING_STATE_RUN_VELOCITY) {
+        effort = speed_loop(lab_output->velocity_target_rad_s,
+                            feedback->mechanical_velocity_rad_s,
+                            app.safety_output.torque_limit_q15,
+                            BOARD_LAB_VELOCITY_STICTION_COMPENSATION_V,
+                            BOARD_LAB_VELOCITY_STICTION_FADE_SPEED_RAD_S,
+                            0.0f);
+        speed_controller_active = true;
+    } else if (lab_output->state ==
+               LAB_COMMISSIONING_STATE_RUN_POSITION) {
+        const float position_error =
+            lab_output->position_target_rad - position_rad;
+        const float velocity_target = clampf_local(
+            BOARD_LAB_POSITION_KP_PER_S * position_error,
+            -BOARD_LAB_MAX_VELOCITY_RAD_S,
+            BOARD_LAB_MAX_VELOCITY_RAD_S);
+        const float stiction_minimum_scale =
+            BOARD_LAB_POSITION_STICTION_MIN_SCALE * clampf_local(
+                (fabsf(position_error) -
+                 BOARD_LAB_POSITION_STICTION_ZERO_ERROR_RAD) /
+                    (BOARD_LAB_POSITION_STICTION_FULL_ERROR_RAD -
+                     BOARD_LAB_POSITION_STICTION_ZERO_ERROR_RAD),
+                0.0f,
+                1.0f);
+        effort = speed_loop(velocity_target,
+                            feedback->mechanical_velocity_rad_s,
+                            app.safety_output.torque_limit_q15,
+                            BOARD_LAB_POSITION_STICTION_COMPENSATION_V,
+                            BOARD_LAB_POSITION_STICTION_FADE_SPEED_RAD_S,
+                            stiction_minimum_scale);
+        /* At rest, the voltage-mode speed PI may need to integrate until it
+         * overcomes a cogging detent. Once the rotor is clearly moving toward
+         * the target, that stored breakaway voltage is no longer a useful
+         * load estimate and would otherwise launch the rotor past the target.
+         * Preserve this tick's bumpless output, but discard the stored energy
+         * before the next 1 kHz step. */
+        if ((fabsf(feedback->mechanical_velocity_rad_s) >=
+             BOARD_LAB_POSITION_BREAKAWAY_RESET_SPEED_RAD_S) &&
+            ((velocity_target * feedback->mechanical_velocity_rad_s) >
+             0.0f) &&
+            !control_pi_reset(&app.speed_pi, 0.0f, effort)) {
+            latch_fault_event(DRIVE_FAULT_CONTROL_DEADLINE);
+            effort = 0.0f;
+        }
+        speed_controller_active = true;
+    }
+    command.lab_q_voltage_v = clampf_local(
+        effort,
+        -lab_output->voltage_limit_v,
+        lab_output->voltage_limit_v);
+    if (speed_controller_active) {
+        const float derate =
+            (float)app.safety_output.torque_limit_q15 /
+            (float)DRIVE_SAFETY_FULL_TORQUE_Q15;
+        const float applied_controller_output =
+            (derate > 0.0f) ? (command.lab_q_voltage_v / derate) : 0.0f;
+
+        /* The commissioning voltage limit is intentionally narrower than
+         * the PI's board-wide 1.2 V bound. Track the voltage actually sent to
+         * the FOC so a low-energy test cannot wind the integrator against a
+         * limiter that the PI would otherwise never see. */
+        if (!control_pi_track_applied(&app.speed_pi,
+                                      applied_controller_output,
+                                      APP_SUPERVISOR_PERIOD_S)) {
+            latch_fault_event(DRIVE_FAULT_CONTROL_DEADLINE);
+            command.lab_q_voltage_v = 0.0f;
+        }
+    }
+    return command;
+}
+
+static void publish_lab_stlink_status(
+    const motor_foc_feedback_t *feedback,
+    float position_rad,
+    uint32_t now_us)
+{
+    lab_stlink_status_t status = {0};
+    lab_stlink_trace_sample_t trace_sample = {0};
+    encoder_as5600_diagnostics_t encoder_diagnostics = {0};
+    const uint32_t encoder_gpio_levels =
+        encoder_as5600_gpio_levels(&app.as5600);
+    float trace_reference = 0.0f;
+
+    encoder_as5600_get_diagnostics(&app.as5600, &encoder_diagnostics);
+
+    status.applied_command_sequence = app.lab_applied_sequence;
+    status.state = (uint32_t)app.lab_output.state;
+    status.result = (uint32_t)app.lab_output.result;
+    status.timestamp_us = now_us;
+    status.encoder_raw_count = app.last_encoder_sample.raw_count;
+    status.encoder_health = app.last_encoder_sample.health_flags;
+    status.active_faults = app.safety_output.active_faults;
+    status.latched_faults = app.safety_output.latched_faults;
+    status.current_loop_count = app.current_completion_count;
+    status.supervisor_loop_count = app.supervisor_completion_count;
+    status.raw_mechanical_angle_rad =
+        app.last_encoder_sample.mechanical_angle_rad;
+    status.directed_position_rad = position_rad;
+    status.mechanical_velocity_rad_s =
+        feedback->mechanical_velocity_rad_s;
+    status.encoder_direction = app.encoder_direction_runtime;
+    status.electrical_zero_rad =
+        app.lab_commissioning.electrical_zero_rad;
+    status.alignment_delta_rad =
+        app.lab_commissioning.alignment_delta_rad;
+    status.alpha_voltage_v = feedback->alpha_voltage_v;
+    status.beta_voltage_v = feedback->beta_voltage_v;
+    status.q_voltage_v = feedback->iq_voltage_v;
+    status.duty_a = feedback->duty_a;
+    status.duty_b = feedback->duty_b;
+    status.duty_c = feedback->duty_c;
+    status.bus_voltage_v = feedback->bus_voltage_v;
+    status.encoder_status_raw = encoder_diagnostics.status_raw;
+    status.encoder_agc = encoder_diagnostics.agc;
+    status.encoder_magnitude = encoder_diagnostics.magnitude;
+    status.encoder_minimum_agc = encoder_diagnostics.minimum_agc;
+    status.encoder_maximum_agc = encoder_diagnostics.maximum_agc;
+    status.encoder_minimum_magnitude =
+        encoder_diagnostics.minimum_magnitude;
+    status.encoder_maximum_magnitude =
+        encoder_diagnostics.maximum_magnitude;
+    status.encoder_angle_read_count =
+        encoder_diagnostics.angle_read_count;
+    status.encoder_diagnostic_read_count =
+        encoder_diagnostics.diagnostic_read_count;
+    status.encoder_bus_error_count =
+        encoder_diagnostics.bus_error_count;
+    status.encoder_bus_recovery_count =
+        encoder_diagnostics.bus_recovery_count;
+    status.encoder_bus_failure_count =
+        encoder_diagnostics.bus_failure_count;
+    status.encoder_diagnostic_failure_count =
+        encoder_diagnostics.diagnostic_failure_count;
+    status.encoder_age_us = feedback->encoder_age_us;
+    status.encoder_maximum_age_us = app.lab_max_encoder_age_us;
+    status.encoder_angle_glitch_count =
+        encoder_diagnostics.angle_glitch_count;
+    status.encoder_angle_glitch_recovery_count =
+        encoder_diagnostics.angle_glitch_recovery_count;
+    if (feedback->encoder_valid) {
+        status.flags |= LAB_STLINK_FLAG_ENCODER_VALID;
+    }
+    if ((BOARD_LAB_ACCEPT_WEAK_MAGNET != 0U) &&
+        (feedback->encoder_valid || app.lab_encoder_bus_quiesced) &&
+        (app.last_encoder_sample.health_flags ==
+         ENCODER_HEALTH_MAGNET_WEAK)) {
+        status.flags |= LAB_STLINK_FLAG_WEAK_MAGNET_ACCEPTED;
+    }
+    if (app.lab_encoder_bus_quiesced) {
+        status.flags |= LAB_STLINK_FLAG_ENCODER_BUS_QUIESCED;
+    }
+    if (feedback->electrical_calibration_valid) {
+        status.flags |= LAB_STLINK_FLAG_ELECTRICAL_CALIBRATED;
+    }
+    if (bsp_gate_is_armed()) {
+        status.flags |= LAB_STLINK_FLAG_GATE_ARMED;
+    }
+    if (feedback->output_enabled) {
+        status.flags |= LAB_STLINK_FLAG_OUTPUT_ENABLED;
+    }
+    if (app.lab_output_was_enabled) {
+        status.flags |= LAB_STLINK_FLAG_OUTPUT_WAS_ENABLED;
+    }
+    if ((encoder_gpio_levels & ENCODER_AS5600_GPIO_LEVEL_SCL_HIGH) != 0U) {
+        status.flags |= LAB_STLINK_FLAG_ENCODER_SCL_HIGH;
+    }
+    if ((encoder_gpio_levels & ENCODER_AS5600_GPIO_LEVEL_SDA_HIGH) != 0U) {
+        status.flags |= LAB_STLINK_FLAG_ENCODER_SDA_HIGH;
+    }
+    if (app.encoder_driver_initialized) {
+        status.flags |= LAB_STLINK_FLAG_ENCODER_DRIVER_INITIALIZED;
+    }
+    if (bsp_gate_fault_active()) {
+        status.flags |= LAB_STLINK_FLAG_GATE_FAULT_ACTIVE;
+    }
+    if (feedback->current_feedback_valid) {
+        status.flags |= LAB_STLINK_FLAG_CURRENT_FEEDBACK_VALID;
+    }
+    if (BOARD_GATE_DRIVER_PWM_INPUTS == 3U) {
+        status.flags |= LAB_STLINK_FLAG_THREE_PWM_PROFILE;
+    }
+    status.flags |= LAB_STLINK_FLAG_CURRENT_LOOP_INTERFACE_AVAILABLE;
+#if BOARD_CAN_ENABLED
+    status.flags |= LAB_STLINK_FLAG_CAN_ENABLED;
+#endif
+
+    if (app.lab_applied_sequence != 0U) {
+        lab_stlink_trace_finish(status.state, status.result);
+    }
+    if ((app.lab_applied_sequence != 0U) &&
+        !app.lab_trace_terminal_captured &&
+        (((now_us - app.lab_trace_last_sample_us) >=
+          LAB_STLINK_TRACE_PERIOD_US) ||
+         (status.state != app.lab_trace_last_state))) {
+        switch (app.lab_commissioning.request.command) {
+        case LAB_COMMISSIONING_COMMAND_VOLTAGE:
+        case LAB_COMMISSIONING_COMMAND_VELOCITY:
+        case LAB_COMMISSIONING_COMMAND_POSITION:
+            trace_reference = app.lab_commissioning.request.value;
+            break;
+        case LAB_COMMISSIONING_COMMAND_CALIBRATE:
+        case LAB_COMMISSIONING_COMMAND_OPEN_LOOP:
+            trace_reference = app.lab_output.stator_electrical_angle_rad;
+            break;
+        case LAB_COMMISSIONING_COMMAND_STOP:
+        case LAB_COMMISSIONING_COMMAND_CLEAR_FAULT:
+        default:
+            trace_reference = 0.0f;
+            break;
+        }
+        trace_sample.timestamp_us = now_us;
+        trace_sample.state_result =
+            (status.state & UINT32_C(0xFFFF)) |
+            ((status.result & UINT32_C(0xFFFF)) << 16);
+        trace_sample.encoder_sample =
+            (status.encoder_raw_count & UINT32_C(0xFFFF)) |
+            ((status.encoder_health & UINT32_C(0xFF)) << 16) |
+            (feedback->encoder_valid ? (UINT32_C(1) << 31) : 0U);
+        trace_sample.encoder_diagnostics =
+            (status.encoder_status_raw & UINT32_C(0xFF)) |
+            ((status.encoder_agc & UINT32_C(0xFF)) << 8) |
+            ((status.encoder_magnitude & UINT32_C(0xFFF)) << 16) |
+            (encoder_diagnostics.valid ? (UINT32_C(1) << 31) : 0U);
+        trace_sample.position_rad = position_rad;
+        trace_sample.velocity_rad_s =
+            feedback->mechanical_velocity_rad_s;
+        trace_sample.reference = trace_reference;
+        trace_sample.voltage_v = app.lab_output.fixed_stator_voltage
+                                     ? hypotf(feedback->alpha_voltage_v,
+                                              feedback->beta_voltage_v)
+                                     : feedback->iq_voltage_v;
+        trace_sample.encoder_age_us = feedback->encoder_age_us;
+        trace_sample.encoder_angle_read_count =
+            encoder_diagnostics.angle_read_count;
+        trace_sample.encoder_bus_error_count =
+            encoder_diagnostics.bus_error_count;
+        trace_sample.encoder_bus_failure_count =
+            encoder_diagnostics.bus_failure_count;
+        lab_stlink_trace_append(&trace_sample);
+        app.lab_trace_last_sample_us = now_us;
+        app.lab_trace_last_state = status.state;
+        if ((status.state == LAB_COMMISSIONING_STATE_COMPLETE) ||
+            (status.state == LAB_COMMISSIONING_STATE_FAULT)) {
+            app.lab_trace_terminal_captured = true;
+        }
+    }
+    lab_stlink_publish_status(&status);
+}
+#endif
+
 static void supervisor_step(uint32_t now_us)
 {
     motor_foc_feedback_t feedback_snapshot;
@@ -863,17 +1399,23 @@ static void supervisor_step(uint32_t now_us)
     uint32_t sensed_faults;
     float position_rad;
     bool reset_edge;
+    bool gate_break_cleared = false;
     bool quick_stop_complete;
     bool hardware_ready;
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    lab_commissioning_input_t lab_input;
+#endif
 
     /* Apply complete RPDOs before taking the command/feedback snapshot used
      * by this 1 kHz control transaction. */
+#if BOARD_CAN_ENABLED
     canopen_classic_process_1ms();
+#endif
     consume_external_inputs(now_us);
     {
         const uint32_t primask = critical_enter();
         feedback_snapshot = *motor_foc_feedback(&app.motor);
-        position_rad = BOARD_ENCODER_DIRECTION *
+        position_rad = app.encoder_direction_runtime *
                        encoder_tracker_position_rad(&app.position_tracker);
         critical_exit(primask);
     }
@@ -914,13 +1456,79 @@ static void supervisor_step(uint32_t now_us)
         ((app.od.image.controlword & DRIVE_PDS_CW_FAULT_RESET) != 0U) &&
         ((app.previous_safety_controlword & DRIVE_PDS_CW_FAULT_RESET) == 0U);
     app.previous_safety_controlword = app.od.image.controlword;
+    sensed_faults = collect_faults(feedback, now_us, &app.mode_output);
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    lab_input = lab_input_from_feedback(feedback,
+                                        position_rad,
+                                        now_us,
+                                        sensed_faults);
+    submit_lab_mailbox_if_pending(&lab_input);
+    app.lab_output = lab_commissioning_step(&app.lab_commissioning,
+                                             &lab_input);
+    if ((app.lab_encoder_sample_seen ||
+         ((app.lab_commissioning.request.command ==
+           LAB_COMMISSIONING_COMMAND_OPEN_LOOP) &&
+          ((app.lab_output.state == LAB_COMMISSIONING_STATE_COMPLETE) ||
+           (app.lab_output.state == LAB_COMMISSIONING_STATE_FAULT))) ||
+         (!app.lab_command_seen &&
+          ((now_us - app.boot_timestamp_us) >=
+           APP_LAB_INITIAL_QUIESCE_US))) &&
+        !app.lab_pending_request_valid &&
+        !app.lab_output.drive_enable &&
+        !bsp_gate_is_armed() &&
+        ((app.lab_output.state == LAB_COMMISSIONING_STATE_IDLE) ||
+         (app.lab_output.state == LAB_COMMISSIONING_STATE_COMPLETE) ||
+         (app.lab_output.state == LAB_COMMISSIONING_STATE_FAULT)) &&
+        (app.lab_command_seen ||
+         ((now_us - app.boot_timestamp_us) >=
+          APP_LAB_INITIAL_QUIESCE_US))) {
+        /* Stop the bounded startup probe even when the encoder never ACKed.
+         * This gives ST-Link a quiet bus to inspect instead of halting the
+         * GPIO-I2C backend mid-bit. A new boot always revalidates the live
+         * encoder before any encoder-dependent drive state can arm. */
+        encoder_as5600_release_gpio_bus(&app.as5600);
+        app.lab_encoder_bus_quiesced = true;
+    }
+    if ((app.lab_commissioning.request.command ==
+         LAB_COMMISSIONING_COMMAND_OPEN_LOOP) &&
+        (app.lab_output.state != LAB_COMMISSIONING_STATE_IDLE)) {
+        sensed_faults &= ~DRIVE_FAULT_POSITION_FEEDBACK;
+    }
+    reset_edge = reset_edge || app.lab_output.fault_reset_request;
+    if (app.lab_output.calibration_update) {
+        bool calibration_applied;
+        const uint32_t primask = critical_enter();
+        calibration_applied = motor_foc_set_electrical_calibration(
+            &app.motor,
+            app.lab_output.encoder_direction,
+            app.lab_output.electrical_zero_rad,
+            true);
+        if (calibration_applied) {
+            app.encoder_direction_runtime =
+                app.lab_output.encoder_direction;
+            encoder_tracker_zero_at_current(&app.position_tracker);
+            calibration_applied = lab_stlink_store_calibration(
+                app.lab_output.encoder_direction,
+                app.lab_output.electrical_zero_rad);
+        }
+        critical_exit(primask);
+        if (!calibration_applied) {
+            latch_fault_event(DRIVE_FAULT_CONTROL_DEADLINE);
+        }
+    }
+#endif
     if (reset_edge && !bsp_gate_fault_active() && !bsp_gate_is_armed() &&
         (fabsf(feedback->mechanical_velocity_rad_s) <
          BOARD_VELOCITY_TOLERANCE_RAD_S)) {
-        (void)bsp_gate_clear_break_latch();
+        gate_break_cleared = bsp_gate_clear_break_latch();
+#if BOARD_CAN_ENABLED
         (void)canfd_transport_clear_bus_off_latch();
+#endif
     }
-    sensed_faults = collect_faults(feedback, now_us, &app.mode_output);
+    if (reset_edge && gate_break_cleared && !bsp_gate_fault_active()) {
+        sensed_faults &= ~(DRIVE_FAULT_GATE_DRIVER |
+                           DRIVE_FAULT_GATE_INTERLOCK);
+    }
     if (reset_edge && !bsp_gate_fault_active() && !bsp_gate_is_armed()) {
         /* The PDS owns this internal latch.  Suppress its old published value
          * for one physically-safe reset transaction so both the safety latch
@@ -952,11 +1560,11 @@ static void supervisor_step(uint32_t now_us)
     hardware_ready = feedback->encoder_valid &&
                      feedback->current_feedback_valid &&
                      feedback->bus_voltage_valid &&
-                     (BOARD_ELECTRICAL_ZERO_VALID != 0);
+                     feedback->electrical_calibration_valid;
 #else
     hardware_ready = feedback->encoder_valid &&
                      feedback->bus_voltage_valid &&
-                     (BOARD_ELECTRICAL_ZERO_VALID != 0);
+                     feedback->electrical_calibration_valid;
 #endif
     hardware_ready = hardware_ready && !bsp_gate_fault_active() &&
                      !feedback->control_math_fault;
@@ -972,35 +1580,73 @@ static void supervisor_step(uint32_t now_us)
         app.safety_output.immediate_gate_off;
     pds_input.quick_stop_complete = quick_stop_complete;
     pds_input.gate_enable_allowed = app.safety_output.gate_enable_allowed;
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    /* Guarded Lab commissioning owns the physical gate directly and bypasses
+     * the CiA-402 PDS. Feeding that temporary gate state into an idle PDS
+     * would create a false GateInterlock on the first post-run cycle. */
+    pds_input.gate_feedback_enabled = false;
+#else
     pds_input.gate_feedback_enabled = bsp_gate_is_armed();
+#endif
     pds_input.operation_enable_allowed =
         app.mode_output.operation_enable_allowed;
     pds_input.warning = app.safety_output.warning;
     pds_input.remote = true;
-    app.pds_output = drive_pds_step(&app.pds, &pds_input);
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    if (app.lab_output.drive_enable) {
+        const bool lab_open_loop =
+            app.lab_output.state == LAB_COMMISSIONING_STATE_RUN_OPEN_LOOP;
+        const bool lab_hardware_ready =
+            (lab_open_loop || feedback->encoder_valid) &&
+            feedback->bus_voltage_valid &&
+            !bsp_gate_fault_active() && !feedback->control_math_fault &&
+            (app.lab_output.fixed_stator_voltage ||
+             feedback->electrical_calibration_valid);
 
-    if (app.pds_output.gate_enable_request &&
-        app.safety_output.gate_enable_allowed) {
-        bsp_gate_arm();
-    } else {
-        bsp_gate_disarm();
+        if (lab_hardware_ready &&
+            app.safety_output.gate_enable_allowed &&
+            (app.safety_output.effective_faults == 0U)) {
+            bsp_gate_arm();
+            motor_command = compute_lab_motor_command(&app.lab_output,
+                                                      feedback,
+                                                      position_rad);
+        } else {
+            bsp_gate_disarm();
+            motor_command = (motor_foc_command_t){0};
+        }
+    } else
+#endif
+    {
+        app.pds_output = drive_pds_step(&app.pds, &pds_input);
+
+        if (app.pds_output.gate_enable_request &&
+            app.safety_output.gate_enable_allowed) {
+            bsp_gate_arm();
+        } else {
+            bsp_gate_disarm();
+        }
+
+        motor_command = compute_motion_command(
+            feedback,
+            position_rad,
+            app.pds_output.quick_stop_request ||
+                app.safety_output.quick_stop_request ||
+                app.mode_output.halt_active);
     }
-
-    motor_command = compute_motion_command(
-        feedback,
-        position_rad,
-        app.pds_output.quick_stop_request ||
-            app.safety_output.quick_stop_request ||
-            app.mode_output.halt_active);
     {
         const uint32_t primask = critical_enter();
         motor_foc_set_command(&app.motor, &motor_command);
         critical_exit(primask);
     }
     publish_feedback(feedback, position_rad, now_us);
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    publish_lab_stlink_status(feedback, position_rad, now_us);
+#endif
+#if BOARD_CAN_ENABLED
     canopen_classic_report_drive_faults(
         app.safety_output.effective_faults,
         error_code_from_faults(app.safety_output.effective_faults));
+#endif
 }
 
 void app_current_sample_irq(uint16_t phase_a_raw,
@@ -1034,6 +1680,23 @@ void app_current_sample_irq(uint16_t phase_a_raw,
 #endif
     motor_foc_fast_step(&app.motor, phase_a_raw, phase_b_raw, now_us);
     feedback = motor_foc_feedback(&app.motor);
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    if (feedback->output_enabled) {
+        app.lab_output_was_enabled = true;
+    }
+    if (!app.lab_encoder_age_tracking_complete &&
+        !app.motor.command.lab_fixed_stator_voltage &&
+        (feedback->output_enabled ||
+         (app.motor.command.enable && app.lab_output_was_enabled))) {
+        if (feedback->encoder_age_us > app.lab_max_encoder_age_us) {
+            app.lab_max_encoder_age_us = feedback->encoder_age_us;
+        }
+        if (app.motor.command.enable && app.lab_output_was_enabled &&
+            !feedback->output_enabled) {
+            app.lab_encoder_age_tracking_complete = true;
+        }
+    }
+#endif
     bsp_pwm_write(feedback->duty_a,
                   feedback->duty_b,
                   feedback->duty_c);
@@ -1148,25 +1811,83 @@ static void poll_encoder(uint32_t now_us)
 #else
     encoder_sample_t sample = {0};
     bool valid;
+    bool diagnostics_due = false;
 
-    if ((now_us - app.last_encoder_poll_us) <
-        APP_ENCODER_SAMPLE_PERIOD_US_LAB) {
+    if (app.lab_encoder_bus_quiesced) {
+        return;
+    }
+    const uint32_t poll_period_us = app.encoder_driver_initialized
+                                        ? APP_ENCODER_SAMPLE_PERIOD_US_LAB
+                                        : APP_ENCODER_REPROBE_PERIOD_US_LAB;
+
+    if ((now_us - app.last_encoder_poll_us) < poll_period_us) {
         return;
     }
     app.last_encoder_poll_us = now_us;
     if (!app.encoder_driver_initialized) {
         app.encoder_driver_initialized = initialize_encoder_driver();
+        if (app.encoder_driver_initialized) {
+            app.lab_encoder_bus_error_count = 0U;
+        }
         if (!app.encoder_driver_initialized) {
-            return;
+            /* Publish the failed probe as a real diagnostic sample.  Without
+             * this, the ST-Link status mailbox reports health=0 even though
+             * the AS5600 bus never came up. */
+            sample.timestamp_us = now_us;
+            sample.health_flags = ENCODER_HEALTH_BUS;
+            sample.valid = false;
         }
     }
-    valid = encoder_as5600_read(&app.as5600, now_us, &sample);
-    sample.valid = valid;
+    if (app.encoder_driver_initialized) {
+        valid = encoder_as5600_read(&app.as5600, now_us, &sample);
+        if ((sample.health_flags & ENCODER_HEALTH_BUS) == 0U) {
+            /* Timestamp when the angle bytes are actually available, not
+             * before a software-I2C transaction that can be stretched by
+             * the 20 kHz control ISR. */
+            sample.timestamp_us = bsp_micros();
+        }
+        if (!valid && (BOARD_LAB_ACCEPT_WEAK_MAGNET != 0U) &&
+            (sample.health_flags == ENCODER_HEALTH_MAGNET_WEAK)) {
+            /* Preserve the ML diagnostic while explicitly allowing only this
+             * single degraded state for guarded, low-voltage Lab commands. */
+            valid = true;
+        }
+        sample.valid = valid;
+        if (valid) {
+            app.lab_encoder_bus_error_count = 0U;
+            if (!app.lab_command_seen &&
+                (now_us - app.last_encoder_diagnostic_us) >=
+                APP_ENCODER_DIAGNOSTIC_PERIOD_US_LAB) {
+                app.last_encoder_diagnostic_us = now_us;
+                diagnostics_due = true;
+            }
+        } else if ((sample.health_flags & ENCODER_HEALTH_BUS) != 0U) {
+            if (app.lab_encoder_bus_error_count < UINT8_MAX) {
+                ++app.lab_encoder_bus_error_count;
+            }
+            if (app.lab_encoder_bus_error_count <
+                APP_LAB_MAX_CONSECUTIVE_BUS_ERRORS) {
+                /* Keep the last sample's real timestamp. The FOC stale-data
+                 * watchdog remains authoritative while two short EMI-hit
+                 * transactions are retried on the following 1 kHz polls. */
+                return;
+            }
+            app.encoder_driver_initialized = false;
+        } else {
+            app.lab_encoder_bus_error_count = 0U;
+        }
+    }
     {
         const uint32_t primask = critical_enter();
         app.pending_encoder = sample;
         app.pending_encoder_valid = true;
         critical_exit(primask);
+    }
+    /* AGC/MAGNITUDE are observability-only. Perform that second transaction
+     * after publishing the fresh control angle so diagnostics can never age
+     * a valid sample past the independent 5 ms stale watchdog. */
+    if (diagnostics_due) {
+        (void)encoder_as5600_read_diagnostics(&app.as5600);
     }
 #endif
 }
@@ -1192,6 +1913,7 @@ static void poll_bus_voltage(uint32_t now_us)
 #endif
 }
 
+#if BOARD_CAN_ENABLED
 static void transmit_feedback(uint32_t now_us)
 {
     motor_vendor_feedback_t frame;
@@ -1206,6 +1928,27 @@ static void transmit_feedback(uint32_t now_us)
     critical_exit(primask);
     (void)canfd_transport_send_feedback(&frame,
                                         &app.vendor_feedback_limits);
+}
+#endif
+
+static void update_status_led(uint32_t now_us)
+{
+    motor_foc_feedback_t feedback;
+    bool on;
+    const uint32_t primask = critical_enter();
+
+    feedback = *motor_foc_feedback(&app.motor);
+    critical_exit(primask);
+    if (app.safety_output.effective_faults != 0U) {
+        on = ((now_us / 100000UL) & 1UL) != 0UL;
+    } else if (bsp_gate_is_armed()) {
+        on = true;
+    } else if (feedback.encoder_valid) {
+        on = (now_us % 1000000UL) < 100000UL;
+    } else {
+        on = (now_us % 500000UL) < 250000UL;
+    }
+    bsp_status_led_set(on);
 }
 
 static bool realtime_loops_are_healthy(uint32_t now_us, uint32_t now_cycles)
@@ -1283,9 +2026,11 @@ void app_background(void)
 {
     const uint32_t now_us = bsp_micros();
     const uint32_t now_cycles = bsp_cycle_counter();
+#if BOARD_CAN_ENABLED
     const uint32_t canopen_elapsed_us =
         now_us - app.last_canopen_background_us;
     canopen_classic_status_t canopen_status;
+#endif
     uint32_t health_now_us;
     uint32_t health_now_cycles;
 
@@ -1310,6 +2055,7 @@ void app_background(void)
         app.monitor_dwt_progress_us = now_us;
         app.realtime_monitor_started = true;
     }
+#if BOARD_CAN_ENABLED
     app.last_canopen_background_us = now_us;
     canopen_classic_background(canopen_elapsed_us);
     canopen_status = canopen_classic_status();
@@ -1320,9 +2066,13 @@ void app_background(void)
         __DSB();
         NVIC_SystemReset();
     }
+#endif
     poll_encoder(now_us);
     poll_bus_voltage(now_us);
+#if BOARD_CAN_ENABLED
     transmit_feedback(now_us);
+#endif
+    update_status_led(now_us);
     health_now_us = bsp_micros();
     health_now_cycles = bsp_cycle_counter();
     if (realtime_loops_are_healthy(health_now_us, health_now_cycles)) {

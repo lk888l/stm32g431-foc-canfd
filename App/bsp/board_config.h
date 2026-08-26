@@ -51,6 +51,31 @@ typedef uint8_t board_profile_t;
 #error "BOARD_PROFILE selects an unsupported hardware profile"
 #endif
 
+/* The current bench has no CAN transceiver. Keep the complete CAN stack in
+ * the production image, but do not initialize pins, message RAM, interrupts,
+ * or protocol watchdogs in the AS5600 lab image. */
+#ifndef BOARD_CAN_ENABLED
+#if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
+#define BOARD_CAN_ENABLED 1
+#else
+#define BOARD_CAN_ENABLED 0
+#endif
+#endif
+
+#if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
+#define BOARD_GATE_DRIVER_PWM_INPUTS 6U
+#define BOARD_HARDWARE_I2C1_ENABLED   1U
+#define BOARD_I2C1_USE_HSI            0U
+#define BOARD_I2C1_TIMING             0x00F02B86UL
+#else
+#define BOARD_GATE_DRIVER_PWM_INPUTS 3U
+#define BOARD_HARDWARE_I2C1_ENABLED   0U
+#define BOARD_I2C1_USE_HSI            0U
+#define BOARD_I2C1_TIMING             0x10320309UL
+#endif
+
+#define BOARD_STATUS_LED_ACTIVE_HIGH          1
+
 #define BOARD_MOTOR_POLE_PAIRS              7.0f
 #define BOARD_MOTOR_RS_OHM                  2.55f
 #define BOARD_MOTOR_LD_H                    0.00086f
@@ -102,7 +127,63 @@ typedef uint8_t board_profile_t;
 #define BOARD_CURRENT_OFFSET_MAX_COUNT         3584U
 #define BOARD_CURRENT_OFFSET_MAX_SPAN_COUNT      64U
 #define BOARD_ENCODER_STALE_US_PRODUCTION     2000UL
-#define BOARD_ENCODER_STALE_US_LAB            5000UL
+/* The GPIO-I2C AS5600 path has measured recovered transactions just over
+ * 5 ms while the 20 kHz PWM ISR is active. Keep a bounded margin below the
+ * angle PLL's independent 10 ms re-acquisition limit. */
+#define BOARD_ENCODER_STALE_US_LAB            8000UL
+
+/* Bench-only degraded policy: AS5600 STATUS.ML may be used for the guarded
+ * low-voltage Lab commissioning sequence when it is the only health flag.
+ * The warning remains visible in the ST-Link status; Bus, NoMagnet,
+ * MagnetStrong, stale or combined health faults remain invalid. */
+#define BOARD_LAB_ACCEPT_WEAK_MAGNET              1U
+
+/* Conservative GPIO-I2C timing for the current harness. The bit-bang backend
+ * deliberately keeps a full data-hold half-cycle plus the next bit's setup
+ * half-cycle, so the effective write clock is about 133 kHz. Production
+ * hardware I2C remains independent. */
+#define BOARD_LAB_AS5600_GPIO_I2C_HZ          200000UL
+
+/* Reject impossible AS5600 count jumps before they reach either the angle
+ * tracker or the electrical commutation angle. 60 rad/s is three times the
+ * Lab command ceiling; the fixed count allowance covers quantization and
+ * software-I2C scheduling jitter without admitting a gross 0xFFF bus frame. */
+#define BOARD_LAB_AS5600_MAX_STEP_SPEED_RAD_S     60.0f
+#define BOARD_LAB_AS5600_STEP_MARGIN_COUNTS          16U
+#define BOARD_LAB_AS5600_STARTUP_MATCH_COUNTS         64U
+
+/* One-shot ST-Link commissioning limits for the no-current-sensor lab board.
+ * With Rs=2.55 ohm, 1.2 V is a deliberately conservative standstill vector;
+ * it is not a measured current limit and must not be presented as torque
+ * control. Every run command also has a hard duration cap. */
+#define BOARD_LAB_MIN_ALIGNMENT_V               0.30f
+#define BOARD_LAB_MAX_VOLTAGE_V                 1.20f
+#define BOARD_LAB_MAX_VELOCITY_RAD_S           20.0f
+#define BOARD_LAB_MAX_OPEN_LOOP_VOLTAGE_V        0.30f
+#define BOARD_LAB_MAX_OPEN_LOOP_ELECTRICAL_RAD_S 10.0f
+#define BOARD_LAB_MAX_ABS_POSITION_RAD        100.0f
+#define BOARD_LAB_ENCODER_WAIT_TIMEOUT_US   1000000UL
+#define BOARD_LAB_ALIGN_ZERO_TIME_US        1000000UL
+#define BOARD_LAB_ALIGN_QUADRATURE_TIME_US  1000000UL
+#define BOARD_LAB_ALIGN_RETURN_TIME_US      1000000UL
+#define BOARD_LAB_MAX_ALIGNMENT_REPEAT_ERROR_RAD 0.05f
+#define BOARD_LAB_DEFAULT_RUN_TIME_US       2000000UL
+#define BOARD_LAB_MAX_RUN_TIME_US          10000000UL
+#define BOARD_LAB_MAX_OPEN_LOOP_RUN_TIME_US 1000000UL
+#define BOARD_LAB_SPEED_KP_V_PER_RAD_S          0.20f
+#define BOARD_LAB_SPEED_KI_V_PER_RAD             0.30f
+#define BOARD_LAB_VELOCITY_STICTION_COMPENSATION_V 0.20f
+#define BOARD_LAB_VELOCITY_STICTION_FADE_SPEED_RAD_S 0.75f
+#define BOARD_LAB_POSITION_STICTION_COMPENSATION_V 0.40f
+#define BOARD_LAB_POSITION_STICTION_MIN_SCALE       0.70f
+#define BOARD_LAB_POSITION_STICTION_ZERO_ERROR_RAD  0.003f
+#define BOARD_LAB_POSITION_STICTION_FULL_ERROR_RAD  0.020f
+#define BOARD_LAB_POSITION_STICTION_FADE_SPEED_RAD_S 0.75f
+#define BOARD_LAB_POSITION_BREAKAWAY_RESET_SPEED_RAD_S 0.25f
+#define BOARD_LAB_STICTION_FULL_TARGET_RAD_S       0.5f
+#define BOARD_LAB_POSITION_KP_PER_S               3.0f
+#define BOARD_LAB_ANGLE_PLL_KP_PER_S              80.0f
+#define BOARD_LAB_ANGLE_PLL_KI_PER_S2           1600.0f
 
 #define BOARD_CURRENT_KP_V_PER_A                0.60f
 #define BOARD_CURRENT_KI_V_PER_AS            1800.0f

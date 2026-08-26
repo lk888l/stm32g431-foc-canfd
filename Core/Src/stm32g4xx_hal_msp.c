@@ -1,5 +1,6 @@
 #include "main.h"
 
+#include "board_config.h"
 #include "bsp.h"
 
 void HAL_MspInit(void)
@@ -71,7 +72,14 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef *i2c)
     __HAL_RCC_I2C1_CLK_ENABLE();
     gpio.Pin = GPIO_PIN_6 | GPIO_PIN_7;
     gpio.Mode = GPIO_MODE_AF_OD;
+#if BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600
+    /* The AS5600-S board already has 4.7 kOhm pull-ups.  Weak MCU pull-ups
+     * keep both lines released during connector/power sequencing and are
+     * harmless in parallel with the external resistors. */
+    gpio.Pull = GPIO_PULLUP;
+#else
     gpio.Pull = GPIO_NOPULL;
+#endif
     gpio.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
     gpio.Alternate = GPIO_AF4_I2C1;
     HAL_GPIO_Init(GPIOB, &gpio);
@@ -174,9 +182,11 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef *timer)
     gpio.Alternate = GPIO_AF9_TIM1;
     HAL_GPIO_Init(GATE_FAULT_GPIO_Port, &gpio);
 
+#if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
     gpio.Pin = PHASE_A_L_Pin | PHASE_B_L_Pin | PHASE_C_L_Pin;
     gpio.Alternate = GPIO_AF6_TIM1;
     HAL_GPIO_Init(GPIOB, &gpio);
+#endif
 }
 
 void MX_GPIO_Init(void)

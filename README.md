@@ -6,14 +6,16 @@
 
 ## 两种硬件配置
 
-| 配置 | 用途 | 位置传感器 | 相电流反馈 | PV / PP | MIT |
-|---|---|---|---|---|---|
-| `BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701` | 量产硬件参考，默认 | MT6701 SSI，14 bit | 当前固件同步采 A/B 两相并重构 C 相 | 完成硬件标定后允许 | 只有电流反馈、硬件保护和标定全部有效才允许 |
-| `BOARD_PROFILE_LAB_SIMPLEFOC_AS5600` | 低速实验与方向验证 | AS5600 I²C，12 bit | SimpleFOC Mini 上不存在 | 仅限保守带宽实验 | **强制禁用真实 MIT** |
+| 配置 | PWM 驱动 | 位置传感器 | 相电流反馈 | CAN | PV / PP | MIT |
+|---|---|---|---|---|---|---|
+| `BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701` | PA8…PA10 + PB13…PB15，6-PWM | MT6701 SSI，14 bit | 当前固件同步采 A/B 两相并重构 C 相 | 启用 | 完成硬件标定后允许 | 只有电流反馈、硬件保护和标定全部有效才允许 |
+| `BOARD_PROFILE_LAB_SIMPLEFOC_AS5600` | 仅 PA8/PA9/PA10，3-PWM；PB13…PB15 不配置 | AS5600 I²C，12 bit | SimpleFOC Mini 上不存在 | 当前台架关闭 | ST-Link 一次性低压电压/速度/位置实验 | **强制禁用真实 MIT** |
 
 量产板必须至少提供：低侧或在线两/三分流电阻及放大器、TIM1 同步 ADC 采样、独立模拟比较器到 TIM1 BKIN 的硬件过流关断、MT6701 SSI、母线电压与温度采样、可读取的栅极驱动故障、CAN-FD 收发器、正确的终端与时钟设计。详见 [量产硬件契约](docs/02_HARDWARE_CONTRACT.md)。
 
 配置宏名称中的 `3SHUNT` 是现有接口名，不代表当前固件已采三路：本构建只同步采 PA1/A 相和 PA7/B 相，按 `Ic=-(Ia+Ib)` 重构第三相；PB0 只预留可选第三分流。若要真正三路采样，必须重新设计 ADC 队列、触发/采样窗口、校准与测试，不能只接上 PB0。
+
+Lab 固件保留与量产路径相同的 `motor_foc_set_current_sample()`、d/q PI 和反馈有效性接口，但始终提交 `current_feedback_valid=false`，因此当前只能执行限时、限幅的电压矢量实验，不会把估算电压伪装成电流或转矩。台架构建、烧录、AS5600 检查、双遍电角度对齐、末段环形轨迹导出及 2026-08-25 实机结论见 [SimpleFOC Mini + AS5600 的 ST-Link 投运](docs/10_LAB_STLINK_COMMISSIONING.md)。当前实物已通过受限 `±2 rad/s` 速度和双向约 `1 rad`、10 s 位置验证，最终位置误差为 `0.0017…0.0077 rad`；最强齿槽位置的一次 5 s 命令仍曾停在目标另一侧、误差 `0.0416 rad`。AS5600 继续报告 `MagnetWeak/AGC=128`，所以这不是磁场、真实转矩控制或量产放行结论。
 
 ## 工程能力与边界
 
@@ -45,6 +47,8 @@ Core/          启动入口、HAL 中断与 MSP
 Tests/unit/    可在主机执行的算法/状态机/协议测试
 config/        协议配置模板；不是认证材料
 docs/          硬件、控制、通信、调试与安全文档
+brushless_control.ioc       Production 的 6-PWM / MT6701 / FDCAN 配置基线
+brushless_control_lab.ioc   Lab 的 3-PWM / AS5600 / 无 FDCAN 配置基线
 ```
 
 ## 文档阅读顺序
@@ -58,10 +62,11 @@ docs/          硬件、控制、通信、调试与安全文档
 7. [安全案例与故障反应](docs/07_SAFETY_CASE.md)
 8. [构建、烧录与 CubeMX](docs/08_CUBEMX_BUILD_FLASH.md)
 9. [验证与量产放行清单](docs/09_VALIDATION_PLAN.md)
+10. [SimpleFOC Mini + AS5600 的 ST-Link 投运](docs/10_LAB_STLINK_COMMISSIONING.md)
 
 ## 核心默认值
 
-- 当前所有固件 profile（包括 Lab）都因启用 CAN-FD 而要求 PF0/PF1 上安装 8 MHz HSE，PLL 到 170 MHz；`BRUSHLESS_USE_8MHZ_HSE=OFF` 会在 CMake configure 阶段失败。PWM 与电流环 20 kHz，PendSV 监督/轨迹环 1 kHz。
+- 当前两种固件 profile 都使用 PF0/PF1 的 8 MHz HSE 并由 PLL 运行到 170 MHz；Production 启用 CAN/CAN-FD，当前 Lab 台架不初始化 FDCAN、CAN 引脚或通信看门狗。PWM/快速电机循环为 20 kHz，PendSV 监督/轨迹环为 1 kHz；Lab 虽不闭合电流环，仍保留同一 20 kHz 接口和中性关断路径。
 - TIM2 提供 1 MHz、32 bit 本地微秒时基；TIM1 最小高/低脉宽窗口当前保留 340 tick（2 µs）。
 - `bsp_start_realtime()` 后首次 main background 启动 5 ms 健康宽限；之后用 ISR 完成计数证明 20 kHz 快环持续前进（DWT 新鲜度 ≤500 µs）、1 kHz PendSV 持续前进（≤5 ms），并让 TIM2/DWT 在 2 ms 窗口内双向交叉监测。任一失败先关 gate、锁存 deadline，再停止刷新约 100 ms IWDG。
 - CAN-FD：仲裁段 500 kbit/s，数据段 2 Mbit/s，BRS。

@@ -152,6 +152,6 @@ omega_e  = pole_pairs × direction × omega_m
 
 ## 启停顺序
 
-上电后保持 RESET/SLEEP/EN/MOE 为安全态，依次完成：HAL 时钟、ADC 自校准、传感器健康、零电流偏置、总线/温度检查、编码器方向/零位数据校验、CAN 初始化、PDS 进入 `Switch on disabled`。只有收到合法 Controlword/命令且安全层允许，才能请求 gate enable；必须由物理 gate feedback 确认后，PDS 才进入 `Switched on`/`Operation enabled`。
+上电后保持 RESET/SLEEP/EN 和物理相通道 CCxE/CCxNE 为安全态，依次完成：HAL 时钟、ADC 自校准、传感器健康、零电流偏置、总线/温度检查、编码器方向/零位数据校验、CAN 初始化、PDS 进入 `Switch on disabled`。无引脚 CH4/MOE 可在 gate 关闭时继续产生 ADC 快环触发。只有收到合法 Controlword/命令且安全层允许，才能请求相通道与 gate enable；必须由物理 gate feedback 确认后，PDS 才进入 `Switched on`/`Operation enabled`。
 
-关断时先根据故障类别执行受控减速或立即 BKIN，随后撤销 `MOE` 和 `GATE_ENABLE`。软件命令值归零不等同于硬件关断。
+关断时先根据故障类别执行受控减速或立即 BKIN，随后撤销物理相通道 `CCxE/CCxNE` 和 `GATE_ENABLE`；BKIN/fatal 路径同时清 `MOE`。普通 Idle 为保持 CH4 ADC 触发可以保留 MOE，但不能保留任何物理相通道。软件命令值归零不等同于硬件关断。

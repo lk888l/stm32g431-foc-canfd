@@ -51,6 +51,9 @@ void bsp_fdcan_tx_unlock(void);
 uint32_t bsp_cycle_counter(void);
 uint32_t bsp_micros(void);
 void bsp_watchdog_refresh(void);
+void bsp_status_led_set(bool on);
+bool bsp_lab_retention_allowed(void);
+bool bsp_i2c1_recover(void);
 void bsp_fatal_shutdown(void);
 
 void SystemClock_Config(void);

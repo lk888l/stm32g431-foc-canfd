@@ -25,11 +25,21 @@ static volatile bool bus_sample_rank1_captured;
 static volatile uint16_t bus_sample_rank1_raw;
 static bool current_sample_uses_rank1;
 static bool current_sample_warmup_pending;
+static bool lab_retention_allowed;
 
 #define BSP_BUS_SAMPLE_STALE_US UINT32_C(30000)
 #define BSP_STM32G431_REV_Z UINT16_C(0x2001)
 #define BSP_STM32G431_REV_Y UINT16_C(0x2002)
 #define BSP_STM32G431_REV_X UINT16_C(0x2003)
+#define BSP_TIM1_MAIN_OUTPUT_MASK \
+    (TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E)
+#if BOARD_PROFILE == BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701
+#define BSP_TIM1_DRIVE_OUTPUT_MASK \
+    (BSP_TIM1_MAIN_OUTPUT_MASK | TIM_CCER_CC1NE | \
+     TIM_CCER_CC2NE | TIM_CCER_CC3NE)
+#else
+#define BSP_TIM1_DRIVE_OUTPUT_MASK BSP_TIM1_MAIN_OUTPUT_MASK
+#endif
 
 static float clamp01(float value)
 {
@@ -44,9 +54,21 @@ static float clamp01(float value)
 
 void bsp_init(void)
 {
+    const uint32_t reset_flags = RCC->CSR;
     const uint16_t silicon_revision = (uint16_t)(
         (DBGMCU->IDCODE & DBGMCU_IDCODE_REV_ID_Msk) >>
         DBGMCU_IDCODE_REV_ID_Pos);
+
+    /* Debug PIN/SW resets may retain a guarded calibration; command retention
+     * is validated independently so an incomplete mailbox can never run.
+     * Power, watchdog, low-power and option-byte resets force a fresh encoder
+     * alignment. */
+    lab_retention_allowed =
+        ((reset_flags & (RCC_CSR_SFTRSTF | RCC_CSR_PINRSTF)) != 0U) &&
+        ((reset_flags & (RCC_CSR_BORRSTF | RCC_CSR_IWDGRSTF |
+                         RCC_CSR_WWDGRSTF | RCC_CSR_LPWRRSTF |
+                         RCC_CSR_OBLRSTF)) == 0U);
+    __HAL_RCC_CLEAR_RESET_FLAGS();
 
     gate_armed = false;
     gate_break_latched = false;
@@ -86,13 +108,27 @@ void bsp_init(void)
     MX_ADC2_Init();
     MX_TIM1_Init();
     MX_TIM2_Init();
+#if BOARD_CAN_ENABLED
     MX_FDCAN1_Init();
+#endif
+#if BOARD_HARDWARE_I2C1_ENABLED
     MX_I2C1_Init();
+#endif
     MX_SPI3_Init();
 
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0U;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+#if (BOARD_PROFILE == BOARD_PROFILE_LAB_SIMPLEFOC_AS5600) && \
+    defined(BRUSHLESS_DEBUG_BUILD)
+    /* ST-Link mailbox transactions briefly halt the core. Freeze the local
+     * timeout/watchdog clocks so the guarded command can be committed before
+     * the legacy tool resets the target. TIM1 deliberately keeps switching:
+     * freezing an armed PWM timer could hold a phase output at a DC level. */
+    __HAL_DBGMCU_FREEZE_TIM2();
+    __HAL_DBGMCU_FREEZE_IWDG();
+#endif
 
     if (HAL_TIM_Base_Start(&htim2) != HAL_OK) {
         Error_Handler();
@@ -135,6 +171,9 @@ void bsp_start_realtime(void)
 #endif
 
     bsp_pwm_write(0.5f, 0.5f, 0.5f);
+    /* HAL_TIM_PWM_Start() enables CCxE/MOE. Keep CH4/MOE alive for the ADC
+     * trigger but remove every physical phase output before interrupts run. */
+    bsp_gate_disarm();
 
     /* ES0431 2.5.9 applies to every known die revision: the first conversion
      * more than 1 ms after calibration or a preceding conversion can be
@@ -145,6 +184,7 @@ void bsp_start_realtime(void)
         (HAL_ADCEx_InjectedStart_IT(&hadc1) != HAL_OK)) {
         Error_Handler();
     }
+#if BOARD_CAN_ENABLED
     if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
         Error_Handler();
     }
@@ -157,6 +197,7 @@ void bsp_start_realtime(void)
         Error_Handler();
     }
     HAL_GPIO_WritePin(CAN_STANDBY_GPIO_Port, CAN_STANDBY_Pin, GPIO_PIN_RESET);
+#endif
 
     MX_IWDG_Init();
 }
@@ -165,7 +206,7 @@ void bsp_gate_arm(void)
 {
     const uint32_t primask = __get_PRIMASK();
 
-    /* Close the check/clear/MOE/enable race against TIM1 break IRQ.  BKIN
+    /* Close the check/CCxE/MOE/enable race against TIM1 break IRQ.  BKIN
      * still acts asynchronously in hardware while IRQs are masked; the
      * second flag/pin check catches a fault that arrived inside this short
      * critical section. */
@@ -177,6 +218,7 @@ void bsp_gate_arm(void)
     }
 
     __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_BREAK);
+    SET_BIT(htim1.Instance->CCER, BSP_TIM1_DRIVE_OUTPUT_MASK);
     __HAL_TIM_MOE_ENABLE(&htim1);
     HAL_GPIO_WritePin(GATE_ENABLE_GPIO_Port, GATE_ENABLE_Pin, GPIO_PIN_SET);
     __DMB();
@@ -194,7 +236,11 @@ void bsp_gate_disarm(void)
 {
     HAL_GPIO_WritePin(GATE_ENABLE_GPIO_Port, GATE_ENABLE_Pin, GPIO_PIN_RESET);
     if (htim1.Instance == TIM1) {
-        __HAL_TIM_MOE_DISABLE(&htim1);
+        /* CH4 must remain enabled under MOE because it triggers the ADC fast
+         * loop. Isolate the bridge by removing only physical phase channels;
+         * BKIN and fatal shutdown still clear MOE asynchronously/explicitly. */
+        CLEAR_BIT(htim1.Instance->CCER, BSP_TIM1_DRIVE_OUTPUT_MASK);
+        __DSB();
     }
     gate_armed = false;
 }
@@ -240,7 +286,9 @@ bool bsp_gate_clear_break_latch(void)
 bool bsp_gate_is_armed(void)
 {
     return gate_armed && (htim1.Instance == TIM1) &&
-           ((htim1.Instance->BDTR & TIM_BDTR_MOE) != 0U);
+           ((htim1.Instance->BDTR & TIM_BDTR_MOE) != 0U) &&
+           ((htim1.Instance->CCER & BSP_TIM1_DRIVE_OUTPUT_MASK) ==
+            BSP_TIM1_DRIVE_OUTPUT_MASK);
 }
 
 void bsp_pwm_write(float duty_a, float duty_b, float duty_c)
@@ -449,12 +497,32 @@ void bsp_watchdog_refresh(void)
     }
 }
 
+void bsp_status_led_set(bool on)
+{
+#if BOARD_STATUS_LED_ACTIVE_HIGH
+    const GPIO_PinState state = on ? GPIO_PIN_SET : GPIO_PIN_RESET;
+#else
+    const GPIO_PinState state = on ? GPIO_PIN_RESET : GPIO_PIN_SET;
+#endif
+    HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, state);
+}
+
+bool bsp_lab_retention_allowed(void)
+{
+    return lab_retention_allowed;
+}
+
 void bsp_fatal_shutdown(void)
 {
     bsp_gate_disarm();
+    if (htim1.Instance == TIM1) {
+        CLEAR_BIT(htim1.Instance->BDTR, TIM_BDTR_MOE);
+        __DSB();
+    }
     HAL_GPIO_WritePin(DRIVER_RESET_GPIO_Port, DRIVER_RESET_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(DRIVER_SLEEP_GPIO_Port, DRIVER_SLEEP_Pin, GPIO_PIN_RESET);
     HAL_GPIO_WritePin(CAN_STANDBY_GPIO_Port, CAN_STANDBY_Pin, GPIO_PIN_SET);
+    bsp_status_led_set(true);
 }
 
 void SystemClock_Config(void)
@@ -468,6 +536,11 @@ void SystemClock_Config(void)
 #if BOARD_USE_8MHZ_HSE
     oscillator.OscillatorType = RCC_OSCILLATORTYPE_HSE;
     oscillator.HSEState = RCC_HSE_ON;
+#if BOARD_I2C1_USE_HSI
+    oscillator.OscillatorType |= RCC_OSCILLATORTYPE_HSI;
+    oscillator.HSIState = RCC_HSI_ON;
+    oscillator.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+#endif
     oscillator.PLL.PLLSource = RCC_PLLSOURCE_HSE;
     oscillator.PLL.PLLM = RCC_PLLM_DIV2;
 #else
@@ -496,12 +569,22 @@ void SystemClock_Config(void)
         Error_Handler();
     }
 
-    peripheral_clocks.PeriphClockSelection = RCC_PERIPHCLK_ADC12 |
-                                             RCC_PERIPHCLK_FDCAN |
-                                             RCC_PERIPHCLK_I2C1;
+    peripheral_clocks.PeriphClockSelection = RCC_PERIPHCLK_ADC12;
+#if BOARD_CAN_ENABLED
+    peripheral_clocks.PeriphClockSelection |= RCC_PERIPHCLK_FDCAN;
+#endif
+#if BOARD_HARDWARE_I2C1_ENABLED
+    peripheral_clocks.PeriphClockSelection |= RCC_PERIPHCLK_I2C1;
+#endif
     peripheral_clocks.Adc12ClockSelection = RCC_ADC12CLKSOURCE_SYSCLK;
+#if BOARD_CAN_ENABLED
     peripheral_clocks.FdcanClockSelection = RCC_FDCANCLKSOURCE_PCLK1;
+#endif
+#if BOARD_HARDWARE_I2C1_ENABLED && BOARD_I2C1_USE_HSI
+    peripheral_clocks.I2c1ClockSelection = RCC_I2C1CLKSOURCE_HSI;
+#elif BOARD_HARDWARE_I2C1_ENABLED
     peripheral_clocks.I2c1ClockSelection = RCC_I2C1CLKSOURCE_PCLK1;
+#endif
     if (HAL_RCCEx_PeriphCLKConfig(&peripheral_clocks) != HAL_OK) {
         Error_Handler();
     }
@@ -775,8 +858,7 @@ void MX_FDCAN1_Init(void)
 void MX_I2C1_Init(void)
 {
     hi2c1.Instance = I2C1;
-    /* 400 kHz Fast-mode at 170 MHz PCLK1; revalidate after any clock change. */
-    hi2c1.Init.Timing = 0x00F02B86U;
+    hi2c1.Init.Timing = BOARD_I2C1_TIMING;
     hi2c1.Init.OwnAddress1 = 0U;
     hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
     hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -819,10 +901,43 @@ void MX_IWDG_Init(void)
 {
     hiwdg.Instance = IWDG;
     hiwdg.Init.Prescaler = IWDG_PRESCALER_32;
-    hiwdg.Init.Window = 4095U;
     /* Approximately 100 ms at the nominal 32 kHz LSI. */
     hiwdg.Init.Reload = 99U;
+    hiwdg.Init.Window = 4095U;
     if (HAL_IWDG_Init(&hiwdg) != HAL_OK) {
         Error_Handler();
     }
+}
+
+bool bsp_i2c1_recover(void)
+{
+    if (hi2c1.Instance != I2C1) {
+        return false;
+    }
+
+    /* A blocking HAL timeout restores the software state but can leave START
+     * set in CR2.  The peripheral then owns SCL/SDA indefinitely and every
+     * later probe sees BUSY.  A kernel reset is sufficient on this board: a
+     * halted diagnostic verified that both externally pulled-up lines release
+     * high as soon as I2C1 is disabled. */
+    __HAL_I2C_DISABLE(&hi2c1);
+    __HAL_RCC_I2C1_FORCE_RESET();
+    __DSB();
+    __HAL_RCC_I2C1_RELEASE_RESET();
+    NVIC_ClearPendingIRQ(I2C1_EV_IRQn);
+    NVIC_ClearPendingIRQ(I2C1_ER_IRQn);
+
+    hi2c1.State = HAL_I2C_STATE_RESET;
+    hi2c1.Lock = HAL_UNLOCKED;
+    hi2c1.Mode = HAL_I2C_MODE_NONE;
+    hi2c1.ErrorCode = HAL_I2C_ERROR_NONE;
+    if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
+        return false;
+    }
+    if ((HAL_I2CEx_ConfigAnalogFilter(&hi2c1,
+                                      I2C_ANALOGFILTER_ENABLE) != HAL_OK) ||
+        (HAL_I2CEx_ConfigDigitalFilter(&hi2c1, 0U) != HAL_OK)) {
+        return false;
+    }
+    return true;
 }

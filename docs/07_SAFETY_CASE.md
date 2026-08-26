@@ -135,7 +135,7 @@ Bus-off 分成两层恢复：HAL ErrorStatus 先锁存 `CAN_BUS_OFF`，再清 M_
 
 1. **Derate/warning**：保持闭环但限制 `Iq/torque`，用于仍有可靠反馈的渐进热/电源限制。
 2. **Controlled stop / Quick stop**：在可靠角度、电流和母线能量路径存在时，用批准的减速度把速度/转矩降到窗口，再撤销 gate。
-3. **Immediate gate off**：立刻清 `MOE` 和 `GATE_ENABLE`；适合过流、过压、驱动故障、当前反馈失效、deadline、gate interlock、hard timeout 和 STO。
+3. **Immediate gate off**：立刻清物理相通道 `CCxE/CCxNE` 和 `GATE_ENABLE`；BKIN/fatal 路径同时清 `MOE`。普通软件关断保留 CH4/MOE 仅用于继续监督 ADC 快环，不能让任何相输出保持启用。适合过流、过压、驱动故障、当前反馈失效、deadline、gate interlock、hard timeout 和 STO。
 
 “立即关 gate”不保证电机立即停止；惯性负载会自由滑行，永磁电机也可能向母线回馈。需要机械制动或接触器时必须由系统状态机协调。
 

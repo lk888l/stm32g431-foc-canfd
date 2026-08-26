@@ -174,6 +174,23 @@ static bool control_pi_tracking_candidate(const control_pi_t *controller,
     return true;
 }
 
+bool control_pi_track_applied(control_pi_t *controller,
+                              float applied_output,
+                              float timestep_s)
+{
+    float corrected_integrator;
+
+    if (!control_pi_tracking_candidate(controller,
+                                       applied_output,
+                                       timestep_s,
+                                       &corrected_integrator)) {
+        return false;
+    }
+    controller->integrator = corrected_integrator;
+    controller->output = applied_output;
+    return true;
+}
+
 bool control_pi_track_applied_pair(control_pi_t *first_controller,
                                    float first_applied_output,
                                    control_pi_t *second_controller,

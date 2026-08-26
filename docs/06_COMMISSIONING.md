@@ -13,6 +13,12 @@
 
 人员不得站在旋转平面内。首次带电时拆除负载、降低母线和电流限幅，并确保物理急停能够切断驱动电源，而不是只发一条 CAN 命令。
 
+## SimpleFOC Mini + AS5600 Lab 路径
+
+当前三输入实验台架不具备相电流反馈，不能按下文量产电流环阶段放行。使用 `BOARD_PROFILE_LAB_SIMPLEFOC_AS5600` 时只连接 PA8/PA9/PA10 到 IN1/IN2/IN3，PB13/PB14/PB15 保持未配置；AS5600 使用 PB6/SCL、PB7/SDA 和 3.3 V 上拉；状态 LED 为 PC6。当前 Lab 固件也不初始化 CAN，因此未连接 PA11/PA12 和收发器不会产生通信故障。
+
+Lab 投运由 ST-Link 一次性邮箱执行：先只读确认 AS5600 `EncoderValid`，再运行限时电角度对齐，最后依次做小电压、低速和小角度位置测试。每条运动命令都有电压上限和最长 10 s 的硬时限，完成或故障后自动回到中性占空比并撤销 gate。详细命令、状态字段和失败判据见 [SimpleFOC Mini + AS5600 的 ST-Link 投运](10_LAB_STLINK_COMMISSIONING.md)。该路径始终保持 `current_feedback_valid=false`；保留的电流采样/PI 接口只为以后更换有采样链的功率板使用。
+
 ## 阶段 0：文档与静态门槛
 
 1. 确认实际电机是 2804，而不是资料目录内其他型号；记录极数、绕组连接和批次。
@@ -25,7 +31,7 @@
 
 只给 MCU 低压电源，不连接 DC bus 和电机：
 
-1. 测量复位、启动、调试器暂停和 watchdog 复位期间 `GATE_ENABLE`,`RESET`,`SLEEP`,`MOE` 的安全电平。
+1. 测量复位、启动、调试器暂停和 watchdog 复位期间 `GATE_ENABLE`,`RESET`,`SLEEP`,`MOE` 及 TIM1 相通道 `CCxE/CCxNE` 的安全状态；普通 Idle 允许为 CH4 采样触发保留 MOE，但所有物理相通道必须关闭。
 2. 验证 8 MHz HSE 的启动裕量、170 MHz 系统时钟、TIM1 20 kHz 中心对齐、互补极性、约 200 ns 初始死区，以及 340 tick/2 µs 最小高低脉宽；此时只看 MCU/驱动输入。
 3. 手动拉动 `nFAULT/BKIN`，确认不依赖 CPU 指令即可关闭 PWM，并锁存正确故障。
 4. 验证 ADC 自校准；确认 TIM1 CH4 PWM2 每个中心对齐周期只有一个上升沿，`CCR4=4164` 且两个采样 aperture 位于载波 crest 附近。读取并记录真实 `REV_ID`；Rev Z 验证使用 JDR1，Rev Y/X 验证使用 JDR2，未知 revision 必须在 GPIO 安全态建立后拒绝启动。确认实时启动后的第一整个 dual sequence 仅被清除，未进入 FOC 或 offset 累加；再检查两个 ADC 的相对时序、放大器建立和所选采样孔径。

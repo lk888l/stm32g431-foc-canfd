@@ -6,23 +6,23 @@
 
 | 功能 | STM32G431CBU6 引脚 | 外设 / 方向 | 契约 |
 |---|---|---|---|
-| A/B/C 高侧 PWM | PA8 / PA9 / PA10 | TIM1_CH1/2/3 | 中心对齐，20 kHz |
-| A/B/C 低侧 PWM | PB13 / PB14 / PB15 | TIM1_CH1N/2N/3N | 与高侧互补，硬件死区 |
+| A/B/C 主 PWM | PA8 / PA9 / PA10 | TIM1_CH1/2/3 | 中心对齐，20 kHz；Production 与 Lab 共用 |
+| A/B/C 互补 PWM | PB13 / PB14 / PB15 | TIM1_CH1N/2N/3N | 仅 Production 6-PWM；Lab 不配置这些引脚 |
 | 硬件关断 | PA15 | TIM1_BKIN / AF9 | `nFAULT`/比较器汇总，低有效、异步关断；不得配置成普通 GPIO |
 | 相 A 电流 | PA1 | ADC1_IN2 / COMP1_INP | 与 TIM1 CH4 同步采样 |
 | 相 B 电流 | PA7 | ADC2_IN4 / COMP2_INP | 与 TIM1 CH4 同步采样 |
 | 可选相 C 电流 | PB0 | ADC1_IN15 / COMP4_INP | 仅预留；当前双分流构建不采样，启用前需重新规划 ADC 队列 |
 | 母线电压 | PA3 | ADC1_IN4 | 分压、RC 和过压钳位 |
 | 温度 | PA5 | ADC | 功率级或电机 NTC |
-| CAN RX / TX | PA11 / PA12 | FDCAN1 | 必须外接 CAN-FD 收发器 |
-| AS5600 SCL / SDA | PB6 / PB7 | I2C1 | 仅实验配置，3.3 V 上拉 |
+| CAN RX / TX | PA11 / PA12 | FDCAN1 | Production 必须外接 CAN-FD 收发器；当前 Lab 不初始化 |
+| AS5600 SCL / SDA | PB6 / PB7 | GPIO 开漏软件 I2C | 仅实验配置；半周期按 200 kHz 配置，写阶段因额外数据保持约为 133 kHz，SDA 三点多数采样；模块外部 4.7 kΩ 上拉到 3.3 V，Lab 固件同时开弱内部上拉；Production 的硬件 I2C1 后端保留但不用于本台架 |
 | MT6701 SCK / MISO | PC10 / PC11 | SPI3/SSI | 量产角度反馈 |
 | MT6701 CS | PB4 | GPIO | 软件片选，空闲高 |
 | 驱动 EN / RESET / SLEEP | PB10 / PB11 / PB12 | GPIO | 上电默认低/复位，软件放行后再使能 |
 | CAN 收发器 standby | PB3 | GPIO | 上电默认待机 |
 | SWD | PA13 / PA14 | SWDIO / SWCLK | 量产保留测试点 |
 | HSE | PF0 / PF1 | OSC_IN / OSC_OUT | 量产默认要求 8 MHz 晶振及匹配负载网络 |
-| 状态 LED | PC13 | GPIO | 不得作为唯一安全指示 |
+| 状态 LED | PC6 | GPIO，高有效 | 不得作为唯一安全指示 |
 
 引脚表是参考设计契约。若实际 PCB 不同，应同时更新原理图、`.ioc`、`Core/Inc/main.h`、BSP、生产测试和本文，不能只靠跳线临时适配。
 
@@ -30,7 +30,7 @@
 
 量产 BSP 假设外部栅极驱动接受 6-PWM。应满足：
 
-- TIM1 主输出使能 `MOE` 与独立 `GATE_ENABLE` 构成两级软件许可。
+- TIM1 物理相通道许可（Lab 为 `CC1E/CC2E/CC3E`，Production 另含 `CC1NE/CC2NE/CC3NE`）与独立 `GATE_ENABLE` 构成两级运行许可。Idle/普通软件关断会清这些相通道位，但保留无引脚 CH4 与 MOE 以维持 ADC 快环触发；BKIN 仍异步清 MOE，fatal/reset 路径也显式清 MOE。
 - 上电、复位、HardFault、看门狗复位和调试器断开时，所有栅极处于无转矩安全态。
 - EN/RESET/SLEEP、CAN standby 与任何驱动高有效许可脚必须有板级上拉/下拉，使 MCU 尚未配置 GPIO、未知 silicon revision 停在错误处理或 MCU 失电时仍处于安全态；内部 GPIO pull 不能作为唯一防线。
 - 死区从栅极驱动、MOSFET 开关时间、温度和器件离散性实测得出；当前 `34` 个 170 MHz 定时器 tick 约 200 ns，只是起始值。
@@ -39,7 +39,9 @@
 - 比较器/DAC 或外部硬件过流阈值必须在 MCU 软件失控时仍能关断。
 - DC-link 电容、电源回生吸收、TVS/制动方案必须覆盖 PP 减速和外力回拖的母线能量。
 
-SimpleFOC Mini 常见三输入接口与上述 6-PWM 量产接口并不等价。实验配置必须使用单独的板级适配，禁止把 CHxN 误接到三输入驱动器，也禁止按量产 BSP 直接接线。
+SimpleFOC Mini 的三输入接口与上述 6-PWM 量产接口并不等价。`BOARD_PROFILE_LAB_SIMPLEFOC_AS5600` 只启动 TIM1 CH1/2/3 并把 PA8/PA9/PA10 接到 IN1/IN2/IN3；不会启动 CH1N/2N/3N，MSP 也不配置 PB13/PB14/PB15。PA15 接低有效 `nFAULT/BKIN`，PB10 是软件总使能；PB11/PB12 只有在实际载板引出 RESET/SLEEP 时才连接。禁止把 CHxN 误接到三输入驱动器，也禁止把 Production 固件刷入该台架后带母线运行。
+
+Lab 固件当前不调用 `MX_FDCAN1_Init()`、不启动 FDCAN、保持 CAN standby，也不启用 CANopen/厂商帧通信超时。PA11/PA12 未接收发器不阻止 Lab 投运；这不改变 Production 的 CAN 硬件契约。
 
 ## 相电流测量
 
@@ -111,7 +113,7 @@ STM32G431 器件勘误是本 ADC 契约的一部分，必须以 [ST ES0431](http
 
 软件机械 OVERSPEED 已把 PLL 最大估计速度配置为 `450 rad/s`，trip 保持 `300 rad/s`，因而判据不再被同值钳位遮蔽。量产仍必须验证原始角增量/时间戳、PLL 饱和、正反向阈值和迟滞，把 trip 置于电机/机械安全包络内；在目标注入测试通过前，fault bit 8 的存在仍不能单独作为保护证据。
 
-实验 AS5600 的默认 stale 阈值为 5 ms，但这不表示能在 5 ms 延迟下做高带宽控制。其 I²C 调用不得阻塞 20 kHz 电流 ISR；应在较低优先级采样并用时间戳提交。
+实验 AS5600 的 stale 阈值为 8 ms：5 ms 配置曾在一个已成功恢复的事务达到 5009 µs 时误关断，当前闭环实测最大值为 7354 µs，另一次异常事务在 8015 µs 正确触发关断。8 ms 仍严格低于角度 PLL 独立的 10 ms 重捕获上限；不得为掩盖布线、EMI 或磁场问题继续放宽。这不表示可在 8 ms 延迟下做高带宽控制。I²C 调用不得阻塞 20 kHz 电流 ISR；应在较低优先级采样并用完成时间戳提交。
 
 ## CAN-FD 物理层
 
@@ -122,7 +124,7 @@ MCU 的 PA11/PA12 不能直接接 CAN_H/CAN_L。量产板需要：
 - 120 Ω 终端只安装在总线两端；分支长度、连接器和线束阻抗受控。
 - 适当的 TVS、共模抗扰、地参考/隔离策略和 ESD 路径。
 - 对最终节点数和线束进行示波器眼图/边沿、采样点与错误计数测试。
-- 当前所有固件 profile 都启用 FDCAN 并强制 `BOARD_USE_8MHZ_HSE=1`；实物必须装有 8 MHz 晶振并完成启动裕量、温漂和时钟精度验证。CMake 对 `BRUSHLESS_USE_8MHZ_HSE=OFF` 直接报错，Lab 也没有 HSI 例外；没有 HSE 的板不能使用当前固件基线。
+- Production profile 启用 FDCAN，当前 Lab profile 不初始化 FDCAN；两者都强制 `BOARD_USE_8MHZ_HSE=1`。实物必须装有 8 MHz 晶振并完成启动裕量、温漂和时钟精度验证。CMake 对 `BRUSHLESS_USE_8MHZ_HSE=OFF` 直接报错，Lab 也没有 HSI 例外；没有 HSE 的板不能使用当前固件基线。
 
 500 kbit/s / 2 Mbit/s 是参考时序，不是所有网络的保证。任何 PCLK、晶振、收发器或线束变化都要重新计算时序与容差。
 

@@ -73,6 +73,19 @@ bool control_pi_step(control_pi_t *controller,
                      control_pi_result_t *result);
 
 /**
+ * Track the output actually applied by a scalar actuator.
+ *
+ * Use this after a downstream limiter or derating stage that is outside the
+ * PI's configured output clamp.  The controller applies the same
+ * back-calculation term documented for control_pi_track_applied_pair() and
+ * records applied_output as its truthful last output.  Invalid input leaves
+ * the controller unchanged.
+ */
+bool control_pi_track_applied(control_pi_t *controller,
+                              float applied_output,
+                              float timestep_s);
+
+/**
  * Track the outputs actually applied by a coupled two-axis actuator.
  *
  * A per-axis PI cannot account for a later vector-magnitude limiter by

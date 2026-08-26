@@ -15,12 +15,47 @@
 #include "../../App/control/angle_pll.h"
 #include "../../App/control/control_pi.h"
 #include "../../App/control/control_trajectory.h"
+#include "../../App/control/encoder_plausibility.h"
 #include "../../App/control/foc_math.h"
 #include "../../App/control/mit_controller.h"
 
 static int almost_equal(float left, float right, float tolerance)
 {
     return fabsf(left - right) <= tolerance;
+}
+
+static void test_encoder_plausibility(void)
+{
+    assert(encoder_plausibility_distance_counts(100U, 112U, 4096U) ==
+           12U);
+    assert(encoder_plausibility_distance_counts(4090U, 5U, 4096U) ==
+           11U);
+    assert(encoder_plausibility_distance_counts(5U, 4090U, 4096U) ==
+           11U);
+    assert(encoder_plausibility_distance_counts(4096U, 0U, 4096U) ==
+           UINT16_MAX);
+
+    /* At 60 rad/s and 1 ms, the physical envelope is about 39.1 counts.
+     * With a 16-count allowance it rounds upward to 56 counts. */
+    assert(encoder_plausibility_step(1000U, 1056U, 4096U, 1000U,
+                                     60.0f, 16U));
+    assert(!encoder_plausibility_step(1000U, 1057U, 4096U, 1000U,
+                                      60.0f, 16U));
+    assert(encoder_plausibility_step(4090U, 5U, 4096U, 0U,
+                                     0.0f, 16U));
+    assert(!encoder_plausibility_step(100U, 3000U, 4096U, 1000U,
+                                      60.0f, 16U));
+
+    /* A long acquisition gap intentionally permits re-acquisition anywhere
+     * on the circle; the independent stale watchdog controls drive safety. */
+    assert(encoder_plausibility_step(0U, 2048U, 4096U, 1000000U,
+                                     60.0f, 16U));
+    assert(!encoder_plausibility_step(0U, 1U, 1U, 1000U,
+                                      60.0f, 16U));
+    assert(!encoder_plausibility_step(0U, 1U, 4096U, 1000U,
+                                      NAN, 16U));
+    assert(!encoder_plausibility_step(0U, 1U, 4096U, 1000U,
+                                      -1.0f, 16U));
 }
 
 static void test_angle_wrapping(void)
@@ -186,6 +221,7 @@ static void test_pi_coupled_applied_output_tracking(void)
     };
     control_pi_t first;
     control_pi_t second;
+    control_pi_t scalar;
     control_pi_result_t result;
     float first_integrator_before;
     float first_output_before;
@@ -194,6 +230,22 @@ static void test_pi_coupled_applied_output_tracking(void)
 
     assert(control_pi_init(&first, &config));
     assert(control_pi_init(&second, &config));
+    assert(control_pi_init(&scalar, &config));
+    assert(control_pi_step(&scalar, 3.0f, 0.0f, 0.01f, &result));
+    assert(almost_equal(scalar.integrator, 0.06f, 1.0e-6f));
+    assert(almost_equal(scalar.output, 3.06f, 1.0e-6f));
+    assert(control_pi_track_applied(&scalar, 1.0f, 0.01f));
+    assert(almost_equal(scalar.integrator, -0.146f, 1.0e-6f));
+    assert(scalar.output == 1.0f);
+    {
+        const float integrator_before = scalar.integrator;
+        const float output_before = scalar.output;
+
+        assert(!control_pi_track_applied(&scalar, NAN, 0.01f));
+        assert(!control_pi_track_applied(&scalar, 0.0f, 0.0f));
+        assert(scalar.integrator == integrator_before);
+        assert(scalar.output == output_before);
+    }
     assert(control_pi_step(&first, 2.0f, 0.0f, 0.01f, &result));
     assert(almost_equal(first.integrator, 0.04f, 1.0e-6f));
     assert(almost_equal(first.output, 2.04f, 1.0e-6f));
@@ -443,6 +495,7 @@ static void test_mit_torque_control(void)
 
 int main(void)
 {
+    test_encoder_plausibility();
     test_angle_wrapping();
     test_transforms();
     test_voltage_limit_and_svpwm();

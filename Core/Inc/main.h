@@ -8,7 +8,8 @@ extern "C" {
 
 void Error_Handler(void);
 
-/* Production reference pin contract. Change only with the board schematic. */
+/* Shared production/lab pin contract. The lab profile uses only PA8..PA10;
+ * PB13..PB15 remain reserved for the future six-PWM/current-loop board. */
 #define PHASE_A_H_GPIO_Port GPIOA
 #define PHASE_A_H_Pin       GPIO_PIN_8
 #define PHASE_B_H_GPIO_Port GPIOA
@@ -39,7 +40,7 @@ void Error_Handler(void);
 #define ENCODER_CS_Pin       GPIO_PIN_4
 
 #define STATUS_LED_GPIO_Port GPIOC
-#define STATUS_LED_Pin       GPIO_PIN_13
+#define STATUS_LED_Pin       GPIO_PIN_6
 
 #ifdef __cplusplus
 }

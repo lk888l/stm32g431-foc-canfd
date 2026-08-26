@@ -19,6 +19,10 @@ typedef struct {
     float encoder_direction;
     float electrical_zero_rad;
     bool electrical_zero_valid;
+    /* Use the latest directed encoder angle for rotor-frame commutation and
+     * retain the PLL only as a velocity observer. This avoids turning a
+     * deliberately low-bandwidth speed filter into electrical-angle lag. */
+    bool direct_encoder_angle_for_commutation;
     float phase_a_current_a_per_count;
     float phase_b_current_a_per_count;
     uint16_t adc_min_valid_count;
@@ -46,6 +50,11 @@ typedef struct {
     float id_reference_a;
     float iq_reference_a;
     float lab_q_voltage_v;
+    /* Lab-only fixed stator vector used to identify encoder direction and
+     * electrical zero before rotor-frame voltage control is permitted. */
+    bool lab_fixed_stator_voltage;
+    float lab_alpha_voltage_v;
+    float lab_beta_voltage_v;
 } motor_foc_command_t;
 
 typedef struct {
@@ -59,6 +68,8 @@ typedef struct {
     float iq_current_a;
     float id_voltage_v;
     float iq_voltage_v;
+    float alpha_voltage_v;
+    float beta_voltage_v;
     float bus_voltage_v;
     float duty_a;
     float duty_b;
@@ -66,6 +77,7 @@ typedef struct {
     uint32_t encoder_health;
     uint32_t encoder_age_us;
     bool encoder_valid;
+    bool electrical_calibration_valid;
     bool current_feedback_valid;
     bool bus_voltage_valid;
     bool calibration_complete;
@@ -91,6 +103,7 @@ typedef struct {
     uint16_t phase_b_offset_min_count;
     uint16_t phase_b_offset_max_count;
     uint32_t last_encoder_timestamp_us;
+    float last_directed_encoder_angle_rad;
     bool initialized;
 } motor_foc_t;
 
@@ -100,6 +113,12 @@ void motor_foc_set_command(motor_foc_t *motor,
 void motor_foc_set_bus_voltage(motor_foc_t *motor,
                                float bus_voltage_v,
                                bool valid);
+/* Runtime calibration hook for the AS5600 lab profile. Production can keep
+ * supplying the same values from its validated persistent parameter set. */
+bool motor_foc_set_electrical_calibration(motor_foc_t *motor,
+                                          float encoder_direction,
+                                          float electrical_zero_rad,
+                                          bool valid);
 bool motor_foc_update_encoder(motor_foc_t *motor,
                               float wrapped_mechanical_angle_rad,
                               uint32_t timestamp_us,

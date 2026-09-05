@@ -1,0 +1,42 @@
+name: Firmware checks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - run: python3 tools/generate_od.py --check
+      - run: python3 tools/vendor.py --check
+      - run: python3 tools/check_project.py
+      - run: cmake --preset Host -DROLLER_SANITIZE=ON
+      - run: cmake --build --preset Host --parallel 2
+      - run: ctest --preset Host
+  arm:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        preset: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+      - name: Install compiler
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libstdc++-arm-none-eabi-newlib
+      - run: cmake --preset ${{ matrix.preset }}
+      - run: cmake --build --preset ${{ matrix.preset }} --parallel 2
+      - run: python3 tools/check_project.py --elf build/${{ matrix.preset }}/canopen_foc.elf
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ matrix.preset }}
+          path: |
+            build/${{ matrix.preset }}/*.elf
+            build/${{ matrix.preset }}/*.hex
+            build/${{ matrix.preset }}/*.bin
+            build/${{ matrix.preset }}/*.map

@@ -1,2 +1,2 @@
 CompileFlags:
-  CompilationDatabase: build/firmware-debug
+  CompilationDatabase: build/Debug

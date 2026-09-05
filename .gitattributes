@@ -1,0 +1,17 @@
+* text=auto
+CMakeLists.txt text eol=lf
+.clangd text eol=lf
+.gitignore text eol=lf
+*.ps1 text eol=lf
+*.yml text eol=lf
+*.c text eol=lf
+*.h text eol=lf
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.cmake text eol=lf
+ThirdParty/** -text
+*.pdf binary
+*.png binary

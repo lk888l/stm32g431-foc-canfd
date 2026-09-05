@@ -1,38 +1,21 @@
 set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
-
-set(TOOLCHAIN_PREFIX "arm-none-eabi-" CACHE STRING "GNU Arm Embedded tool prefix")
-set(ARM_GNU_TOOLCHAIN_ROOT "" CACHE PATH
-    "Optional Arm GNU Toolchain installation root (the directory containing bin)")
-
-set(_arm_toolchain_hints)
-if(ARM_GNU_TOOLCHAIN_ROOT)
-    list(APPEND _arm_toolchain_hints "${ARM_GNU_TOOLCHAIN_ROOT}/bin")
-elseif(DEFINED ENV{ARM_GNU_TOOLCHAIN_ROOT})
-    list(APPEND _arm_toolchain_hints "$ENV{ARM_GNU_TOOLCHAIN_ROOT}/bin")
-endif()
-
-find_program(CMAKE_C_COMPILER
-    NAMES ${TOOLCHAIN_PREFIX}gcc
-    HINTS ${_arm_toolchain_hints}
-    REQUIRED)
-find_program(CMAKE_ASM_COMPILER
-    NAMES ${TOOLCHAIN_PREFIX}gcc
-    HINTS ${_arm_toolchain_hints}
-    REQUIRED)
-find_program(CMAKE_OBJCOPY
-    NAMES ${TOOLCHAIN_PREFIX}objcopy
-    HINTS ${_arm_toolchain_hints}
-    REQUIRED)
-find_program(CMAKE_SIZE
-    NAMES ${TOOLCHAIN_PREFIX}size
-    HINTS ${_arm_toolchain_hints}
-    REQUIRED)
-
-set(CMAKE_C_COMPILER_ID GNU)
-set(CMAKE_ASM_COMPILER_ID GNU)
+set(CMAKE_C_COMPILER arm-none-eabi-gcc)
+set(CMAKE_CXX_COMPILER arm-none-eabi-g++)
+set(CMAKE_ASM_COMPILER arm-none-eabi-gcc)
+set(CMAKE_OBJCOPY arm-none-eabi-objcopy)
+set(CMAKE_SIZE arm-none-eabi-size)
+set(CMAKE_EXECUTABLE_SUFFIX .elf)
 set(CMAKE_EXECUTABLE_SUFFIX_C .elf)
-set(CMAKE_EXECUTABLE_SUFFIX_ASM .elf)
-
-unset(_arm_toolchain_hints)
+set(CMAKE_EXECUTABLE_SUFFIX_CXX .elf)
+set(ARCH "-mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard")
+set(CMAKE_C_FLAGS_INIT "${ARCH} -ffunction-sections -fdata-sections -fstack-usage -Wall")
+set(CMAKE_CXX_FLAGS_INIT "${ARCH} -ffunction-sections -fdata-sections -fstack-usage -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit -Wall")
+set(CMAKE_ASM_FLAGS_INIT "${ARCH} -x assembler-with-cpp")
+set(CMAKE_C_FLAGS_DEBUG "-Og -g3")
+set(CMAKE_CXX_FLAGS_DEBUG "-Og -g3")
+set(CMAKE_C_FLAGS_RELEASE "-Os -g3 -DNDEBUG")
+set(CMAKE_CXX_FLAGS_RELEASE "-Os -g3 -DNDEBUG")
+set(CMAKE_EXE_LINKER_FLAGS_INIT "${ARCH} -T\"${CMAKE_CURRENT_LIST_DIR}/../linker/STM32G431CB_FLASH.ld\" --specs=nano.specs --specs=nosys.specs -Wl,-Map=canopen_foc.map,--gc-sections,--print-memory-usage")
+set(TOOLCHAIN_LINK_LIBRARIES m)

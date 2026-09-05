@@ -1,0 +1,8 @@
+add_executable(roller_tests test_main.cpp)
+target_link_libraries(roller_tests PRIVATE roller_protocol)
+target_compile_options(roller_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(roller_tests PRIVATE Threads::Threads)
+endif()
+add_test(NAME roller_domain_and_protocol COMMAND roller_tests)

@@ -1,89 +1,74 @@
-# STM32G431 无刷电机 FOC 驱动工程
+# RollerCAN C++23 / STM32G431
 
-这是面向 STM32G431CBU6 的无刷电机控制固件工程基线。工程包含无动态内存的 FOC 数学模块、限幅与抗积分饱和 PI、角度 PLL、PV/PP 轨迹、MIT 阻抗控制计算、CiA 402 PDS/模式管理、厂商 CAN-FD 快速帧编解码、安全管理，以及 STM32G4 HAL 外设参考配置。
+面向 **M5Stack Unit-RollerCAN V1.0 / STM32G431CBU6** 的可离线构建电机固件。业务层使用 C++23，20 kHz FOC 与 1 kHz 运动控制运行在 ADC 中断中；FreeRTOS 承担 CANopen 和监督任务。
 
-> **当前状态不是“接线后即可量产”的成品，也没有任何 CiA、功能安全或 EMC 认证。** 随附的 SimpleFOC Mini 原理图没有相电流采样链路，因此不能在该板上实现真实电流环、真实转矩控制或真实 MIT 控制。默认量产配置会在电流标定系数、电角度零位等硬件参数缺失时保持功率级禁用；不允许用 `Uq` 电压冒充转矩。
+当前已完成主机测试、ARM 编译和 CubeMX 重生成验证，**尚未烧录、驱动电机或完成实机闭环验证**。默认禁止上电转动，未校准时不接受闭环使能。电机参数、CSA 电流方向、编码器方向和控制环增益仍需要按 [实机调试步骤](docs/bringup.md) 验证。
 
-## 两种硬件配置
+## 依赖与工具
 
-| 配置 | PWM 驱动 | 位置传感器 | 相电流反馈 | CAN | PV / PP | MIT |
-|---|---|---|---|---|---|---|
-| `BOARD_PROFILE_PRODUCTION_3SHUNT_MT6701` | PA8…PA10 + PB13…PB15，6-PWM | MT6701 SSI，14 bit | 当前固件同步采 A/B 两相并重构 C 相 | 启用 | 完成硬件标定后允许 | 只有电流反馈、硬件保护和标定全部有效才允许 |
-| `BOARD_PROFILE_LAB_SIMPLEFOC_AS5600` | 仅 PA8/PA9/PA10，3-PWM；PB13…PB15 不配置 | AS5600 I²C，12 bit | SimpleFOC Mini 上不存在 | 当前台架关闭 | ST-Link 一次性低压电压/速度/位置实验 | **强制禁用真实 MIT** |
+| 项目 | 版本 / 选择 |
+|---|---|
+| C++ | C++23；`std::expected`、`std::span`、静态容量容器、无异常、无 RTTI |
+| FreeRTOS | **202604.01-LTS / Kernel V11.3.1**，按 2026-09-05 官方 LTS manifest 核实 |
+| CANopen | CANopenNode **v4.1**；经典 CAN，1 Mbit/s，默认 Node-ID 1 |
+| HAL / CMSIS | STM32CubeG4 **V1.6.3**，由 CubeMX 复制到本地 |
+| CubeMX | **6.17.0**，CMake 工程，HAL 时基 TIM6 |
+| 编译器 | 已验证 Arm GNU **15.2.1**；主机 GCC 16.1 / Ubuntu GCC 13.3 |
+| 构建工具 | CMake ≥3.25、Ninja、Python ≥3.10；测试需要支持 C++23 的主机 GCC |
 
-量产板必须至少提供：低侧或在线两/三分流电阻及放大器、TIM1 同步 ADC 采样、独立模拟比较器到 TIM1 BKIN 的硬件过流关断、MT6701 SSI、母线电压与温度采样、可读取的栅极驱动故障、CAN-FD 收发器、正确的终端与时钟设计。详见 [量产硬件契约](docs/02_HARDWARE_CONTRACT.md)。
+外部库完整保存在 `ThirdParty/` 与 `Drivers/`，没有 Git submodule、FetchContent 或构建时下载。ETL 暂未引入：现有静态队列、数组和非拥有接口已满足容量及生命周期要求。
 
-配置宏名称中的 `3SHUNT` 是现有接口名，不代表当前固件已采三路：本构建只同步采 PA1/A 相和 PA7/B 相，按 `Ic=-(Ia+Ib)` 重构第三相；PB0 只预留可选第三分流。若要真正三路采样，必须重新设计 ADC 队列、触发/采样窗口、校准与测试，不能只接上 PB0。
+## 构建
 
-Lab 固件保留与量产路径相同的 `motor_foc_set_current_sample()`、d/q PI 和反馈有效性接口，但始终提交 `current_feedback_valid=false`，因此当前只能执行限时、限幅的电压矢量实验，不会把估算电压伪装成电流或转矩。台架构建、烧录、AS5600 检查、双遍电角度对齐、末段环形轨迹导出及 2026-08-25 实机结论见 [SimpleFOC Mini + AS5600 的 ST-Link 投运](docs/10_LAB_STLINK_COMMISSIONING.md)。当前实物已通过受限 `±2 rad/s` 速度和双向约 `1 rad`、10 s 位置验证，最终位置误差为 `0.0017…0.0077 rad`；最强齿槽位置的一次 5 s 命令仍曾停在目标另一侧、误差 `0.0416 rad`。AS5600 继续报告 `MagnetWeak/AGC=128`，所以这不是磁场、真实转矩控制或量产放行结论。
+将 `arm-none-eabi-g++`、`cmake`、`ninja` 和 Python 加入 PATH。在工程根目录执行：
 
-## 工程能力与边界
-
-| 项目 | 仓库提供 | 放行前仍需完成 |
-|---|---|---|
-| FOC 算法 | Clarke/Park、两轴事务式 PI、dq 电压圆限幅、SVPWM、最小脉宽，以及按调制器最终 applied voltage 做双轴 tracking 反算抗饱和 | 在目标功率板上校验电流极性、采样窗口、死区、持续饱和/恢复、ADC 时序与 WCET |
-| 运动模式 | 独立 mode-instance epoch、PV 加减速限制与新目标锁存、PP 梯形/三角轨迹及 bit 4 目标快照、MIT 转矩到 `Iq` 映射 | 整机惯量/负载下整定；验证模式同值重写/离开重入、丢帧/乱序/重复目标、机械限位与热模型 |
-| 驱动状态 | CiA 402 风格 PDS、Controlword/Statusword、门极反馈联锁，并已接入 CANopenNode OD adapter | 目标主站实机互操作、故障注入和适用的一致性测试 |
-| CAN | STM32 FDCAN 500 kbit/s 仲裁段、2 Mbit/s 数据段参考；厂商 MIT 快速帧含 CRC/序号/本地超时 | 收发器与布线时序验证；确定整网 ID；压力、错误注入及 bus-off 恢复测试 |
-| CANopen | 已绑定 CANopenNode v4 经典 CANopen：NMT、Heartbeat、EMCY/history、SDO server、2 RPDO + 2 TPDO 和 CiA 402 OD adapter；固定 RPDO2 的 0x607A+0x60FF 经全量校验后批量提交 | 目标主站实机互操作、跨 RPDO 时序/丢帧错误注入、EDS/runtime 自动比对和适用的一致性测试；CiA 1301 仍需另接完整协议栈 |
-| 安全 | 故障位、锁存、降额、Quick stop、立即关断和命令看门狗框架；BKIN/反馈/deadline/通信路径已绑定 | 过温传感器/热降额和真实 STO 尚未接入；还需 FMEA、硬件失效注入、独立过流链路、STO/急停系统和应用风险评估 |
-
-`App/protocol/motor_vendor_canfd.*` 是厂商自定义 CAN-FD 快速数据通道，**不是 CiA 1301 CANopen FD**。`App/canopen` 使用 CANopenNode 发送 11-bit、0…8-byte 的经典 CAN 帧；仅仅共用 STM32 FDCAN 外设不会让它变成 CANopen FD。若产品要求对外声明 CiA 1301 兼容，需要接入经过授权并通过一致性验证的 CiA 1301 协议栈。详见 [通信契约](docs/05_COMMUNICATION.md)。
-
-每次合法的 0x6060 写入都会推进独立的 32-bit mode-instance epoch，**包括写入与当前数值相同的模式**；不支持/格式非法，或 PDS 仍为 `Operation enabled` / 仍发布 `torque_enable=true` 时被拒绝的写入不会推进。后者也覆盖仍在带转矩受控停机的 Quick-stop/Fault-reaction 阶段；只有已撤销转矩且不再处于 Operation enabled 才允许切换。1 kHz 管理器发现模式数值或实例 epoch 任一变化都会清除 PP/PV 活动目标。PP bit 4 上升沿会冻结此前已提交的 0x607A 值/目标 epoch、bit 5/6、模式及 mode instance；PV 的 0x60FF（包括固定 RPDO2 中的速度成员）也绑定写入时实例，只有与 active instance 一致的命令才可执行。`mode→target→edge` 全部发生在首次 1 ms supervisor 前仍是合法新事务；反之，同 tick 切离再重入、命令后同值重写 0x6060 或实例不匹配都不能重放旧 PP/PV。
-
-PP 的 `New set-point` 也不是“bit 4 和目标大约同时到达”即可：晚到目标不能补救，已经消费或拒绝的目标 generation 不能重放。当前 CANopenNode 在一次 1 ms `CO_process_RPDO()` 中先处理 RPDO1、再处理 RPDO2；因此主站必须先让 RPDO2 至少跨过一次节点 1 ms 处理，再发送产生 bit 4 上升沿的 RPDO1。PV 没有新写入时保持最后一个合法目标，但仍受 NMT/Heartbeat 撤销链约束。完整主站顺序见 [通信契约](docs/05_COMMUNICATION.md#固定-pdo)。
-
-## 目录
-
-```text
-App/bsp/       STM32G431 外设、功率级与编码器接口
-App/canopen/   CANopenNode v4 经典 CAN 端口、固定 OD/PDO 与应用适配
-App/control/   FOC 数学、PI、PLL、轨迹与 MIT 算法
-App/drive/     CiA 402 PDS 与模式管理
-App/protocol/  对象字典镜像、厂商 CAN-FD 帧
-App/safety/    故障锁存、降额和命令看门狗
-Core/          启动入口、HAL 中断与 MSP
-Tests/unit/    可在主机执行的算法/状态机/协议测试
-config/        协议配置模板；不是认证材料
-docs/          硬件、控制、通信、调试与安全文档
-brushless_control.ioc       Production 的 6-PWM / MT6701 / FDCAN 配置基线
-brushless_control_lab.ioc   Lab 的 3-PWM / AS5600 / 无 FDCAN 配置基线
+```powershell
+./tools/build.ps1 -Preset Host
+./tools/build.ps1 -Preset Debug
+./tools/build.ps1 -Preset Release
 ```
 
-## 文档阅读顺序
+Linux 或直接使用 CMake：
 
-1. [资料审计与已知限制](docs/01_MATERIAL_AUDIT.md)
-2. [量产硬件契约](docs/02_HARDWARE_CONTRACT.md)
-3. [控制架构、频率与单位](docs/03_CONTROL_ARCHITECTURE.md)
-4. [PV、PP 与 MIT 模式](docs/04_MOTION_MODES.md)
-5. [CiA 402 与 CAN-FD 通信](docs/05_COMMUNICATION.md)
-6. [参数辨识、校准与投运](docs/06_COMMISSIONING.md)
-7. [安全案例与故障反应](docs/07_SAFETY_CASE.md)
-8. [构建、烧录与 CubeMX](docs/08_CUBEMX_BUILD_FLASH.md)
-9. [验证与量产放行清单](docs/09_VALIDATION_PLAN.md)
-10. [SimpleFOC Mini + AS5600 的 ST-Link 投运](docs/10_LAB_STLINK_COMMISSIONING.md)
+```sh
+python3 tools/vendor.py --check
+python3 tools/generate_od.py --check
+python3 tools/check_project.py
+cmake --preset Host
+cmake --build --preset Host
+ctest --preset Host
+cmake --preset Debug
+cmake --build --preset Debug
+python3 tools/check_project.py --elf build/Debug/canopen_foc.elf
+```
 
-## 核心默认值
+输出：`build/Debug/` 或 `build/Release/` 内的 `.elf`、`.hex`、`.bin`、`.map`。移植旧目录后若 CMake 报缓存路径不一致，执行 `cmake --fresh --preset Debug`。未提供自动烧录动作。
 
-- 当前两种固件 profile 都使用 PF0/PF1 的 8 MHz HSE 并由 PLL 运行到 170 MHz；Production 启用 CAN/CAN-FD，当前 Lab 台架不初始化 FDCAN、CAN 引脚或通信看门狗。PWM/快速电机循环为 20 kHz，PendSV 监督/轨迹环为 1 kHz；Lab 虽不闭合电流环，仍保留同一 20 kHz 接口和中性关断路径。
-- TIM2 提供 1 MHz、32 bit 本地微秒时基；TIM1 最小高/低脉宽窗口当前保留 340 tick（2 µs）。
-- `bsp_start_realtime()` 后首次 main background 启动 5 ms 健康宽限；之后用 ISR 完成计数证明 20 kHz 快环持续前进（DWT 新鲜度 ≤500 µs）、1 kHz PendSV 持续前进（≤5 ms），并让 TIM2/DWT 在 2 ms 窗口内双向交叉监测。任一失败先关 gate、锁存 deadline，再停止刷新约 100 ms IWDG。
-- CAN-FD：仲裁段 500 kbit/s，数据段 2 Mbit/s，BRS。
-- 2804 电机初始建模值：7 极对、`Rs=2.55 Ω`、`Ld=Lq=0.86 mH`、`λ=0.0035 Wb`、`Kt≈0.03675 N·m/A`。
-- 保守电流初值：连续 `0.5 A`、峰值 `1.0 A`；母线 nominal `12 V`，软件窗口 `7.5…16 V`。
-- 量产电流链使用 A/B 独立 `A/count`；上电各取 `2048` 样本并检查原始值 `[8,4087]`、offset `[512,3584]`、峰峰值 `<=64 count`。任一路失败即禁止 gate；这些保护初值仍须按最终模拟前端和噪声统计审定。
-- 上述电机值来自资料整理，只能作为辨识起点，不能替代实物测量和热测试。
-- 量产构建必须设置实际板级 `A/count`、`V/count`、电角度零位和编码器方向。默认值故意无效，以阻止未标定使能。
+## 生成与源码边界
 
-量产 MT6701 路径采用 SPI3 DMA 20 kHz 流水线：每个 ADC 快环消费上一帧并启动下一帧，约一 PWM 周期延迟由带时间戳 PLL 预测。该架构仍须在实物上用逻辑分析仪/示波器确认 SSI 相位、CRC 测试向量、片选、延迟和抖动后才能放行。
+直接打开 `canopen_foc.ioc`，在 CubeMX 点击 Generate Code 即可。自定义代码位于 `Application/`、`Platform/`、`Protocol/`、`RTOS/`；`Core/` 仅在 `USER CODE` 块保留 C/C++ 入口和紧急关闭调用。根 CMake、工具链和独立 linker script 由本项目维护。
 
-近期安全修正已经落盘：MT6701 DMA busy 超过 `500 µs` 时先原子锁存位置故障/关 gate，再执行 HAL abort 并发布无效样本；ADC1/2 使用两个同通道 rank，按芯片 `REV_ID` 选择有效样本（Rev Z `0x2001` 用 JDR1，Rev Y `0x2002` 与 Rev X `0x2003` 用 JDR2，未知 revision 在 GPIO 安全态建立后拒绝启动），并为所有允许 revision 的 ES0431 §2.5.9 无条件丢弃实时启动后的第一整个 dual injected sequence；VBUS regular 只在 JEOS 后启动，非 alternate `ADC_DUALMODE_INJECSIMULT` 避开 §2.5.11 的双 ADC 并发精度限制；机械 OVERSPEED 的 PLL 上限为 `450 rad/s`、trip 为 `300 rad/s`；TIM2/DWT 交叉监测消除了单一 TIM2 停摆让旧命令永久“新鲜”的直接路径。这些都是待测设计措施，不是量产证据。上电必须实读确认 `REV_ID`、dual mode 与 `JSQR.JL=1`，并用示波器/已知注入证明首序列确实未进入 FOC/offset、所选 JDR rank 和采样窗口正确；否则不得把勘误规避视为有效。
+命令行生成及完整约束见 [构建与重生成](docs/build.md)。不要在 CubeMX 中启用 FreeRTOS middleware，也不要覆盖现有自有 CMake 文件。使用已锁定的 G4 软件包生成；升级 CubeMX/HAL 后需要重跑检查。
 
-Rev Z 的 VBUS regular §2.5.8 路径也已在源码中按同通道连续两个 regular rank 实现：只在 JEOS 后启动，动态处理 EOC/EOS/OVR，并用 `ADC_OVR_DATA_PRESERVED` 保留/发布 rank 1、丢弃 rank 2。这仍必须在目标板实读 regular SQR length=2，并覆盖 rank 1 及时中断与延迟到 rank 2 后的 OVR-preserved 两条路径。任何未来 ADC recalibration、disable/stop 后 restart 也必须重新置位“丢弃首个 dual sequence”，不能只依赖当前唯一的 `bsp_start_realtime()` 路径。
+## 功能与协议边界
 
-## 开始之前
+- 三相电流采样、TLI5012B SSC 编码器、母线采样、Clarke/Park、带限幅与抗积分饱和的 PI、SVPWM。
+- CiA 402 风格状态机，位置模式 1、速度模式 3、转矩模式 4、MIT 模式 5；快速停止、故障锁存与显式复位。
+- NMT、Heartbeat producer/consumer、EMCY、SDO、SYNC、4 RPDO / 4 TPDO 与动态映射。
+- 采用 HexMeow OD 0x08 的 Float32 转数 / 转每秒单位，以及 64 位压缩 MIT 布局。详见 [协议兼容性](docs/protocol.md) 和 [EDS](config/rollercan.eds)。
+- 100 ms 有效运动命令超时、硬件故障脚直接关桥、过流/过压/欠压/温度/编码器/时序故障、任务健康监督与 IWDG。
+- 显式电角校准；双 Flash 页参数日志，元数据与数据 CRC、最后提交标记；上电不恢复运行命令。
 
-先不要接电机。先完成源码单元测试，再在断开母线的条件下验证时钟、GPIO 安全态、编码器、ADC 偏置、故障输入和 CAN；随后使用限流电源、小电流和无负载电机按 [投运顺序](docs/06_COMMISSIONING.md) 逐级放行。任何跳步都会让电角度方向错误、采样极性错误或过流保护失效直接变成功率器件损坏风险。
+这里实现的是 **经典 CANopen 的明确子集**。未实现 HexMeow 的 CAN-FD 长 PDO、模式 7/8、插补缓冲区，也不兼容 M5 原厂私有 29 位 CAN 协议。I²C、OLED 和 RGB 功能暂未启用；不提供缺少传感器的驱动器/电机温度读数。尚未进行 CiA 一致性认证。
 
-本项目不把软件“Fault”当作人员安全功能。人员防护必须由系统级急停、隔离、机械防护、独立过流/过温链路和经风险评估的 STO 方案实现。
+## 阅读顺序
+
+1. [硬件与引脚](docs/hardware.md)：原理图连接、采样窗口和电流尺度。
+2. [架构](docs/architecture.md)：模块生命周期、并发所有权、实时路径和持久化。
+3. [CANopen 协议](docs/protocol.md) / [对象字典](docs/object-dictionary.md)。
+4. [实机调试](docs/bringup.md)：先观测与校准，再低电流闭环。
+5. [构建与验证](docs/build.md) / [本次验证记录](docs/validation.md)。
+
+`tools/rollercan_cli.py` 是无额外 Python 依赖的 Linux SocketCAN SDO 工具，`inspect` 只读取状态。`tools/vendor.py --check-lts` 检查最新 LTS；`--update-freertos-lts` 显式更新本地内核及锁文件，之后需重新测试。GitHub 工作流提供构建测试及每周 LTS 检查，更新不会绕过版本锁悄悄进入固件。
+
+自有代码采用 MIT，第三方及 ST 生成代码保留各自许可，见 [依赖说明](ThirdParty/README.md)。

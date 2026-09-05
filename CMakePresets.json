@@ -1,81 +1,29 @@
 {
-  "version": 6,
-  "cmakeMinimumRequired": {
-    "major": 3,
-    "minor": 22,
-    "patch": 0
-  },
-  "configurePresets": [
-    {
-      "name": "host-debug",
-      "displayName": "Host unit tests (Debug)",
-      "generator": "MinGW Makefiles",
-      "binaryDir": "${sourceDir}/build/host",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "BRUSHLESS_BUILD_FIRMWARE": "OFF",
-        "BRUSHLESS_BUILD_TESTS": "ON"
-      }
-    },
-    {
-      "name": "firmware-debug",
-      "displayName": "STM32G431 firmware (Debug)",
-      "generator": "MinGW Makefiles",
-      "binaryDir": "${sourceDir}/build/firmware-debug",
-      "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "BRUSHLESS_BUILD_FIRMWARE": "ON",
-        "BRUSHLESS_BUILD_TESTS": "OFF",
-        "BRUSHLESS_BOARD_PROFILE": "PRODUCTION",
-        "BRUSHLESS_USE_8MHZ_HSE": "ON"
-      }
-    },
-    {
-      "name": "firmware-release",
-      "displayName": "STM32G431 firmware (Release)",
-      "inherits": "firmware-debug",
-      "binaryDir": "${sourceDir}/build/firmware-release",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
-      }
-    },
-    {
-      "name": "firmware-lab-debug",
-      "displayName": "STM32G431 lab profile (Debug)",
-      "inherits": "firmware-debug",
-      "binaryDir": "${sourceDir}/build/firmware-lab-debug",
-      "cacheVariables": {
-        "BRUSHLESS_BOARD_PROFILE": "LAB",
-        "BRUSHLESS_USE_8MHZ_HSE": "ON"
-      }
-    }
-  ],
-  "buildPresets": [
-    {
-      "name": "host-debug",
-      "configurePreset": "host-debug"
-    },
-    {
-      "name": "firmware-debug",
-      "configurePreset": "firmware-debug"
-    },
-    {
-      "name": "firmware-release",
-      "configurePreset": "firmware-release"
-    },
-    {
-      "name": "firmware-lab-debug",
-      "configurePreset": "firmware-lab-debug"
-    }
-  ],
-  "testPresets": [
-    {
-      "name": "host-debug",
-      "configurePreset": "host-debug",
-      "output": {
-        "outputOnFailure": true
-      }
-    }
-  ]
+    "version": 6,
+    "cmakeMinimumRequired": {"major": 3, "minor": 25, "patch": 0},
+    "configurePresets": [
+        {
+            "name": "firmware",
+            "hidden": true,
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake"
+        },
+        {"name": "Debug", "inherits": "firmware", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}},
+        {"name": "Release", "inherits": "firmware", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
+        {
+            "name": "Host",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/Host",
+            "cacheVariables": {"ROLLER_HOST_TESTS": "ON", "CMAKE_BUILD_TYPE": "Debug"}
+        }
+    ],
+    "buildPresets": [
+        {"name": "Debug", "configurePreset": "Debug"},
+        {"name": "Release", "configurePreset": "Release"},
+        {"name": "Host", "configurePreset": "Host"}
+    ],
+    "testPresets": [
+        {"name": "Host", "configurePreset": "Host", "output": {"outputOnFailure": true}}
+    ]
 }

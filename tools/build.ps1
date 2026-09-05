@@ -1,65 +1,27 @@
-[CmdletBinding()]
 param(
-    [ValidateSet('all', 'host', 'firmware')]
-    [string]$Target = 'all',
-    [ValidateSet('Debug', 'Release')]
-    [string]$Configuration = 'Debug',
-    [ValidateSet('Production', 'Lab')]
-    [string]$BoardProfile = 'Production',
-    [string]$ArmToolchainRoot = $env:ARM_GNU_TOOLCHAIN_ROOT
+    [ValidateSet('Debug', 'Release', 'Host')][string]$Preset = 'Debug',
+    [string]$Python = 'python',
+    [int]$Jobs = 8
 )
-
 $ErrorActionPreference = 'Stop'
-$projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$cmake = (Get-Command cmake -ErrorAction Stop).Source
-$make = (Get-Command mingw32-make -ErrorAction Stop).Source
-
-function Invoke-Checked {
-    param([string]$Program, [string[]]$Arguments)
-    & $Program @Arguments
-    if ($LASTEXITCODE -ne 0) {
-        throw "Command failed with exit code ${LASTEXITCODE}: $Program $Arguments"
+$projectRoot = Split-Path -Parent $PSScriptRoot
+Push-Location -LiteralPath $projectRoot
+try {
+    & $Python tools/generate_od.py --check
+    if ($LASTEXITCODE -ne 0) { throw 'Object dictionary is stale' }
+    & $Python tools/vendor.py --check
+    if ($LASTEXITCODE -ne 0) { throw 'Vendor integrity check failed' }
+    & $Python tools/check_project.py
+    if ($LASTEXITCODE -ne 0) { throw 'CubeMX contract check failed' }
+    cmake --preset $Preset
+    if ($LASTEXITCODE -ne 0) { throw 'CMake configure failed; for a copied old build directory use cmake --fresh --preset <name>' }
+    cmake --build --preset $Preset --parallel $Jobs
+    if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+    if ($Preset -eq 'Host') {
+        ctest --preset Host
+        if ($LASTEXITCODE -ne 0) { throw 'Host tests failed' }
+    } else {
+        & $Python tools/check_project.py --elf "build/$Preset/canopen_foc.elf"
+        if ($LASTEXITCODE -ne 0) { throw 'ELF contract check failed' }
     }
-}
-
-if (($Target -eq 'all') -or ($Target -eq 'host')) {
-    $hostBuild = Join-Path $projectRoot 'build/host'
-    Invoke-Checked $cmake @(
-        '-S', $projectRoot, '-B', $hostBuild,
-        '-G', 'MinGW Makefiles',
-        "-DCMAKE_MAKE_PROGRAM=$make",
-        "-DCMAKE_BUILD_TYPE=$Configuration",
-        '-DBRUSHLESS_BUILD_FIRMWARE=OFF',
-        '-DBRUSHLESS_BUILD_TESTS=ON'
-    )
-    Invoke-Checked $cmake @('--build', $hostBuild, '--parallel')
-    Invoke-Checked $cmake @('--build', $hostBuild, '--target', 'test')
-}
-
-if (($Target -eq 'all') -or ($Target -eq 'firmware')) {
-    if ([string]::IsNullOrWhiteSpace($ArmToolchainRoot)) {
-        $armGcc = Get-Command arm-none-eabi-gcc -ErrorAction Stop
-        $ArmToolchainRoot = Split-Path (Split-Path $armGcc.Source -Parent) -Parent
-    }
-
-    $profileSuffix = if ($BoardProfile -eq 'Lab') { '-lab' } else { '' }
-    $firmwareBuild = Join-Path $projectRoot (
-        "build/firmware$profileSuffix-" + $Configuration.ToLowerInvariant())
-    $toolchain = Join-Path $projectRoot 'cmake/gcc-arm-none-eabi.cmake'
-    $firmwareConfigureArguments = @(
-        '-S', $projectRoot, '-B', $firmwareBuild,
-        '-G', 'MinGW Makefiles',
-        "-DCMAKE_MAKE_PROGRAM=$make",
-        "-DCMAKE_BUILD_TYPE=$Configuration",
-        "-DARM_GNU_TOOLCHAIN_ROOT=$ArmToolchainRoot",
-        '-DBRUSHLESS_BUILD_FIRMWARE=ON',
-        '-DBRUSHLESS_BUILD_TESTS=OFF',
-        "-DBRUSHLESS_BOARD_PROFILE=$($BoardProfile.ToUpperInvariant())",
-        '-DBRUSHLESS_USE_8MHZ_HSE=ON'
-    )
-    if (-not (Test-Path -LiteralPath (Join-Path $firmwareBuild 'CMakeCache.txt'))) {
-        $firmwareConfigureArguments += "-DCMAKE_TOOLCHAIN_FILE=$toolchain"
-    }
-    Invoke-Checked $cmake $firmwareConfigureArguments
-    Invoke-Checked $cmake @('--build', $firmwareBuild, '--parallel')
-}
+} finally { Pop-Location }

@@ -132,6 +132,7 @@ void Node::process(std::uint32_t elapsed_us) noexcept {
 void Node::publish() noexcept {
     command_.sequence = ++sequence_;
     command_.operational = CO_NMT_getInternalState(co_->NMT) == CO_NMT_OPERATIONAL;
+    command_.calibration_permitted = CO_NMT_getInternalState(co_->NMT) == CO_NMT_PRE_OPERATIONAL;
     // A live CANopen task/heartbeat alone cannot keep an old motion command alive.
     const bool bus_ok = (co_->CANmodule->CANerrorStatus &
                          (CO_CAN_ERRTX_BUS_OFF | CO_CAN_ERRRX_OVERFLOW | CO_CAN_ERRTX_OVERFLOW)) == 0;
@@ -172,7 +173,13 @@ void Node::publish() noexcept {
         command_.mit_kd = static_cast<float>(OD_RAM.x2003_05) * OD_RAM.x2003_07;
         command_.max_torque = std::min(command_.max_torque, OD_RAM.x2003_06);
     }
-    if (!channels_.commands.push(command_)) {
+    const auto validated = drive::ValidatedCommand::make(command_);
+    if (!validated) {
+        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::configuration),
+                                           std::memory_order_release);
+        return;
+    }
+    if (!channels_.commands.push(*validated)) {
         channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::timing),
                                            std::memory_order_release);
         channels_.inhibit.store(true, std::memory_order_release);
@@ -314,8 +321,9 @@ ODR_t Node::on_write(OD_stream_t* s, const void* b, OD_size_t n, OD_size_t* writ
             return ODR_DATA_DEV_STATE;
         }
         if (sub == 1) {
-            if (telemetry_.samples < 1024 || telemetry_.fault != drive::Fault::none ||
-                (telemetry_.statusword & 0x6F) != 0x40 || OD_RAM.x6040_00 != 0 ||
+            if (CO_NMT_getInternalState(co_->NMT) != CO_NMT_PRE_OPERATIONAL || telemetry_.samples < 1024 ||
+                telemetry_.fault != drive::Fault::none || (telemetry_.statusword & 0x6F) != 0x40 ||
+                OD_RAM.x6040_00 != 0 ||
                 (telemetry_.calibration >= drive::Calibration::align &&
                  telemetry_.calibration <= drive::Calibration::settle)) {
                 return ODR_DATA_DEV_STATE;

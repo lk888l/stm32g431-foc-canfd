@@ -19,12 +19,28 @@ struct AlphaBeta {
 struct Dq {
     float d{}, q{};
 };
+struct SinCos {
+    float sine{}, cosine{1};
+};
+using Trigonometry = SinCos (*)(float) noexcept;
+inline SinCos software_sincos(float angle) noexcept {
+    return {std::sin(angle), std::cos(angle)};
+}
 inline float wrap(float radians) noexcept {
     if (!std::isfinite(radians)) {
         return 0.0F;
     }
-    radians = std::fmod(radians, tau);
-    return radians < 0.0F ? radians + tau : radians;
+    // Encoder electrical angles are bounded by 32 pole pairs. Avoid libm's
+    // general remainder loop on that path; retain it for arbitrary host inputs.
+    if (std::abs(radians) < 64.0F * tau) {
+        radians -= static_cast<float>(static_cast<std::int32_t>(radians / tau)) * tau;
+    } else {
+        radians = std::fmod(radians, tau);
+    }
+    if (radians < 0) {
+        radians += tau;
+    }
+    return radians < tau ? radians : 0.0F;
 }
 inline float wrap_signed(float radians) noexcept {
     return wrap(radians + pi) - pi;
@@ -39,11 +55,17 @@ inline AlphaBeta inverse_park(Dq v, float sine, float cosine) noexcept {
     return {v.d * cosine - v.q * sine, v.d * sine + v.q * cosine};
 }
 inline Dq limit_vector(Dq v, float limit) noexcept {
-    const auto norm = std::hypot(v.d, v.q);
-    if (!std::isfinite(norm) || !(limit > 0.0F)) {
+    if (!std::isfinite(v.d) || !std::isfinite(v.q) || !std::isfinite(limit) || !(limit > 0)) {
         return {};
     }
-    const auto scale = norm > limit ? limit / norm : 1.0F;
+    const auto maximum = std::max(std::abs(v.d), std::abs(v.q));
+    // Most current-loop outputs are unsaturated. The inscribed square needs
+    // no square root; normalize the remaining cases to avoid float overflow.
+    if (maximum <= limit * 0.70710678F) {
+        return v;
+    }
+    const auto d = v.d / maximum, q = v.q / maximum;
+    const auto scale = std::min(1.0F, (limit / maximum) / std::sqrt(d * d + q * q));
     return {v.d * scale, v.q * scale};
 }
 inline Abc svpwm(AlphaBeta v, float bus) noexcept {

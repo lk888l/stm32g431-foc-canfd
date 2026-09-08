@@ -2,6 +2,7 @@
 #include "roller/control/math.hpp"
 #include "roller/drive/state_machine.hpp"
 #include <cstdint>
+#include <optional>
 
 namespace roller::drive {
 enum class Mode : std::int8_t { none = 0, position = 1, velocity = 3, torque = 4, mit = 5 };
@@ -33,12 +34,26 @@ struct Command {
     std::uint16_t controlword{}, max_torque{1000};
     std::int16_t torque{};
     Mode mode{Mode::none};
-    bool operational{}, network_ok{true};
+    bool operational{}, network_ok{true}, calibration_permitted{true};
     float position{}, velocity{}; // HexMeow units: revolutions, revolutions/second.
     float profile_velocity{2}, acceleration{2}, deceleration{2}, quick_deceleration{4};
     float mit_position{}, mit_velocity{}, mit_torque{}, mit_kp{}, mit_kd{};
     float following_window{0.25F};
     std::uint16_t following_ms{1000};
+};
+// Validation belongs to the producer task. Only this immutable value may cross
+// the task/ISR boundary, so the current loop does not repeat all OD range checks.
+class ValidatedCommand {
+  public:
+    ValidatedCommand() noexcept = default;
+    static std::optional<ValidatedCommand> make(const Command& command) noexcept;
+    const Command& get() const noexcept {
+        return value_;
+    }
+
+  private:
+    explicit ValidatedCommand(const Command& command) noexcept : value_(command) {}
+    Command value_{};
 };
 struct Sample {
     control::Abc current{};
@@ -62,11 +77,17 @@ struct Telemetry {
 class Controller {
   public:
     static constexpr float dt = 1.0F / 20000.0F;
-    explicit Controller(MotorConfig config = {}) noexcept : config_(config) {
+    explicit Controller(MotorConfig config = {},
+                        control::Trigonometry trig = control::software_sincos) noexcept
+        : config_(config), trig_(trig ? trig : control::software_sincos) {
         telemetry_.config = config_;
         calibration_ = config.calibrated ? Calibration::complete : Calibration::required;
+        if (!valid_config(config_)) {
+            fault_ = Fault::configuration;
+        }
     }
     void command(const Command& value) noexcept;
+    void command(const ValidatedCommand& value) noexcept;
     [[nodiscard]] Output step(const Sample& sample) noexcept;
     [[nodiscard]] const Telemetry& telemetry() const noexcept {
         return telemetry_;
@@ -84,11 +105,12 @@ class Controller {
     void outer_step(const Sample& sample) noexcept;
     void reset_loops() noexcept;
     MotorConfig config_;
+    control::Trigonometry trig_;
     Command command_{};
     Telemetry telemetry_{};
     StateMachine state_{};
     control::AngleTracker tracker_{};
-    control::Pi d_pi_{0.8F, 100.0F}, q_pi_{0.8F, 100.0F}, velocity_pi_{0.06F, 0.15F};
+    control::Pi d_pi_{2.0F, 600.0F}, q_pi_{2.0F, 600.0F}, velocity_pi_{0.06F, 0.15F};
     Fault fault_{};
     Calibration calibration_{Calibration::required};
     std::uint32_t ticks_{}, command_age_{}, calibration_tick_{}, calibration_seen_{};

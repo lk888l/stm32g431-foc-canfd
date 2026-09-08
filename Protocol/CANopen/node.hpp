@@ -25,6 +25,9 @@ class Node final : public Module {
     [[nodiscard]] CO_t* stack() noexcept {
         return co_;
     }
+    [[nodiscard]] const drive::Telemetry& telemetry() const noexcept {
+        return telemetry_;
+    }
     [[nodiscard]] bool reset_requested() const noexcept {
         return reset_requested_;
     }

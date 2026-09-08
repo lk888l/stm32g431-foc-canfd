@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       matrix:
-        preset: [Debug, Release]
+        preset: [Debug, Release, Bench]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,7 +31,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y gcc-arm-none-eabi libstdc++-arm-none-eabi-newlib
       - run: cmake --preset ${{ matrix.preset }}
       - run: cmake --build --preset ${{ matrix.preset }} --parallel 2
-      - run: python3 tools/check_project.py --elf build/${{ matrix.preset }}/canopen_foc.elf
+      - run: python3 tools/check_project.py --elf build/${{ matrix.preset }}/canopen_foc.elf ${{ matrix.preset == 'Bench' && '--bench' || '' }}
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.preset }}

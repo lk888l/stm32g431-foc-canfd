@@ -19,6 +19,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "adc.h"
+#include "cordic.h"
 #include "fdcan.h"
 #include "iwdg.h"
 #include "spi.h"
@@ -98,6 +99,7 @@ int main(void)
   MX_TIM7_Init();
   MX_FDCAN1_Init();
   MX_IWDG_Init();
+  MX_CORDIC_Init();
   /* USER CODE BEGIN 2 */
   roller_app_start();
 

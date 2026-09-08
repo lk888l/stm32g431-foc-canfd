@@ -1,62 +1,46 @@
 # 验证记录
 
-日期：2026-09-05。目标为 STM32G431CBU6 / Unit-RollerCAN V1.0。
+更新：2026-09-08，STM32G431CBU6 / Unit-RollerCAN V1.0。实机条件与原始遥测见 [台架记录](bench/2026-09-08.md)，操作工具见 [ST-Link 测试](bench.md)。
 
-## 已完成的软件检查
+## 软件检查
 
 | 检查 | 结果 |
 |---|---|
-| Windows 主机，MinGW GCC 16.1，C++23 | PASS，177333 次断言检查 |
-| WSL2 Ubuntu 24.04，GCC 13.3，AddressSanitizer + UBSan | PASS，无报告 |
-| Arm GNU 15.2.1 Debug (`-Og`) | PASS，自有 C++ `-Werror` |
-| Arm GNU 15.2.1 Release (`-Os`) | PASS，自有 C++ `-Werror` |
-| ELF 中断入口和禁止分配器检查 | PASS；SVC/PendSV/SysTick 由 FreeRTOS 提供 |
-| CubeMX 6.17.0 / G4 V1.6.3 正式重生成 | PASS；当次快照的 55 个源码/构建/配置文件逐字节一致 |
-| OD.c / OD.h / EDS / 对象索引的一致性 | PASS |
-| 依赖逐文件 SHA-256 / 上游压缩包比对 | PASS；FreeRTOS 36 文件，CANopenNode 70 文件 |
-| 官方最新 LTS 查询 | 202604.01-LTS → V11.3.1，commit `3a22924e0a9ddbbc8b0758881c33b3422a5cc20d` |
-| Linux SocketCAN CLI | 参数解析/帮助可运行；未连接真实 CAN 接口 |
-| GitHub 工作流 | 已配置；本地未替用户推送或执行云端 CI |
+| Windows MinGW GCC 16.1，C++23 | PASS，323774 次断言 |
+| WSL Ubuntu 24.04，GCC 13.3，ASan + UBSan | PASS，无报告 |
+| Arm GNU 15.2.1，Debug / Release / Bench | PASS，自有 C++ `-Werror` |
+| ELF 中断入口、禁止分配器及 Bench 隔离 | PASS；生产配置没有 SWD 命令邮箱 |
+| CubeMX 6.17 / G4 V1.6.3 | CORDIC 初始化由生成器产生；重生成检查通过 |
+| OD.c / OD.h / EDS / 对象索引一致性 | PASS |
+| 本地依赖 SHA-256 | PASS；FreeRTOS 36 文件、CANopenNode 70 文件 |
+| 官方最新 LTS 查询 | 202604.01-LTS，Kernel V11.3.1，commit `3a22924e0a9ddbbc8b0758881c33b3422a5cc20d` |
 
-最终构建资源（`arm-none-eabi-size` 与 linker memory report）：
+构建资源：
 
-| 配置 | text | data | bss* | Flash 总占用 | RAM 保留 |
-|---|---:|---:|---:|---:|---:|
-| Debug | 65864 B | 2312 B | 17400 B | 68176 / 126976 B | 19712 / 32768 B |
-| Release | 56900 B | 2312 B | 17400 B | 59212 / 126976 B | 19712 / 32768 B |
+| 配置 | Flash 程序映像 | RAM 保留 |
+|---|---:|---:|
+| Debug | 71496 / 126976 B | 20616 / 32768 B |
+| Release | 64804 / 126976 B | 20608 / 32768 B |
+| Bench | 70768 / 126976 B | 20832 / 32768 B |
 
-\* 包含 NOLOAD 栈预留区。RAM 数字包含静态 TCB、任务栈、协议缓冲和 4 KiB MSP 预算，不代表实测栈峰值。最后 4096 B Flash 不属于程序段，专供参数页。Debug/Release 均生成 ELF、HEX、BIN、MAP。
+Flash 按 BIN/链接区计算，包含段间对齐；RAM 包含静态对象、TCB、任务栈与 4 KiB MSP 预留，不等于实测栈峰值。最后 4096 B Flash 独立用于参数页。完整 newlib 的空间开销换来了优化的内存拷贝。
 
-## 主机测试覆盖
+主机测试覆盖坐标变换、限幅和极端浮点输入、PI 饱和恢复、RL 电流模型、整圈角度跟踪、SPSC 并发、模块回滚、状态机、校准/中止、有效命令类型、维护后的进度监督，以及真正 CANopenNode 的 SDO/PDO/NMT/SYNC/心跳处理。CRC 查表与逐位实现对照全部 65536 个角度字；Flash 日志模型覆盖写入边界中断及 CRC 损坏。
 
-- Clarke/Park 往返、SVPWM 边界、PI 饱和与恢复、角度跨圈和不可信跳变。
-- 10000 圈后的细小角增量仍能更新位置，避免单个 float 累加冻结。
-- 100000 项 SPSC 并发顺序检查与满/空边界。
-- 模块重复注册、启动失败、逆序回滚、清理失败时保留依赖。
-- 使能序列、快速停止、过流/过压、命令过期、故障 bit7 边沿，以及非 1 kHz 边界到达的故障复位。
-- 独立锁轴 RL 电流模型中正向、反向与零转矩目标收敛；模型为测试用 R=2 Ω、L=1 mH，**不是本电机的辨识参数**。
-- 理想角度跟随下正反方向电角校准成功；不动的转子校准失败且不使能。
-- 编码器 CRC check vector、损坏数据、状态故障、断线值。
-- 真正 CANopenNode 处理 boot-up、SDO 数据类型/权限/NaN/未知索引、动态 PDO、短帧、SYNC、心跳超时、有效运动命令期限。
-- 非法 PDO 不执行部分有效命令；压缩 MIT 的同一 PDO 两字段要求、SDO 半包拒绝、量化端点。
-- 同步 PDO 取消不丢弃软件队列中的非同步帧；硬件发送槽取消仍待台架验证。
-- 参数 CRC 标准向量、每个 erase/double-word 边界模拟断电、元数据/数据/提交字损坏回退。
-- 保存后恢复校准与参数，运行模式、控制字和运动目标回到安全默认值。
+## 实机已执行
 
-## 实机验证仍待执行
+11.6 V、无负载、ST-Link SWD 1800 kHz。验证了电压换算和电流正负、三次多圈电角校准、正反速度至 ±5 rev/s、位置往返、正负小电流目标、快速停止、100 ms 命令租约、NMT Stop 中止校准，以及连续 10 次参数保存和复位恢复。台架测试运行真实功率级，但 CANopen 帧通过 SWD 注入。
 
-未连接或操作 ST-Link、CAN 适配器及电机，没有烧录、校准或实际转动。当前结果证明的是软件结构、算法/协议边界及可构建性。
+最终 Bench 回归测得 ADC 控制回调最大 6929 cycles（43.306 µs），低于原有 7200 cycles 阈值；周期约 8000 cycles。这个数字是有限场景下的观测最大值，不是包含 HAL 入口/出口的完整 IRQ 最坏时间证明。CAN 与监督任务的最小空闲栈分别为 478、227 个 32 位 word，包含保存路径。
 
-| 项目 | 状态 / 应记录内容 |
-|---|---|
-| HSI/CAN 位时序与不同主站互通 | 未测；波形、总线负载、错误计数 |
-| DRV8311 模式、CSA 正负与比例、PWM 相序 | 未测；示波器与电流表对照 |
-| SSC 电气时序、CRC、编码器偏移可重复性 | 未测；逻辑分析与重复校准 |
-| 20 kHz ISR 最坏时长和采样窗口 | 未测；DWT 最大值、示波器、IRQ 压力 |
-| RTOS / 中断栈峰值 | 未测；栈高水位与 MSP 使用 |
-| 电机闭环、PI 整定、可用转矩与带载温升 | 未测；逐级小电流调试 |
-| 物理故障脚、按钮、断线、bus-off 恢复 | 未测；停止延迟及复位后输出状态 |
-| Flash 真实掉电 / 欠压及 ECC 错误行为 | 未测；主机 RAM 日志模型不模拟 MCU Flash ECC/NMI，不能据此承诺任意掉电都自动恢复 |
-| 长时间运行与 EMC/CANopen 一致性 | 未测；无认证结论 |
+已烧录并校验正常 Release，最后 4096 B 参数页逐字节不变，恢复 7 极对、direction=-1、电角偏移 0.4887648 rad。ADC 持续运行，上电 PB2 为低，panic/inhibit 均为 0。物理 CAN 启用后观测到 ACK 错误和发送 FIFO 满，随后进入 0x8130 通信故障并保持关桥；尚无有效对端通信验证。
 
-实机步骤见 [bringup.md](bringup.md)。每次改变时钟、ADC/PWM、RTOS port、优化选项或电机参数后，更新对应硬件测试记录。
+## 仍待执行
+
+- 物理 CAN 位时序、不同主站互通、总线压力、bus-off 和发送槽取消。
+- 示波器验证 PWM/ADC 采样窗口、SSC 电气时序；外部仪表校验电流增益。
+- nFAULT/按钮的受控触发与停止延迟；编码器物理断线注入。
+- 带载、绕组/驱动温升、长时耐久、EMC 和 CANopen 一致性。
+- Flash 真实掉电、欠压及 ECC/NMI 行为。主机内存模型不能证明真实 Flash 在任意掉电下均可恢复。
+
+GitHub 工作流包含 Host 和三个 ARM 配置，尚未在本次会话中推送或执行云端 CI。改变时钟、控制参数、优化选项、RTOS 或 ADC/PWM 配置后，应重新记录对应实机结果。

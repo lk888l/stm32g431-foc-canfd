@@ -1,20 +1,29 @@
 #include "adc.h"
 #include "board.hpp"
+#include "cordic_math.hpp"
 #include "fdcan.h"
 #include "iwdg.h"
 #include "main.h"
 #include "node.hpp"
 #include "roller/app_bridge.h"
 #include "roller/core/channels.hpp"
+#include "roller/core/progress_watchdog.hpp"
 #include "static_task.hpp"
 #include "tim.h"
 #include <algorithm>
+#ifdef ROLLER_BENCH
+#include "bench.hpp"
+#endif
 
 namespace {
 roller::Channels channels;
 roller::platform::Board board{channels};
 roller::platform::FlashStore storage{board};
+#ifdef ROLLER_BENCH
+RollerCanTransport can_transport = roller::bench::transport();
+#else
 RollerCanTransport can_transport = board.can_transport();
+#endif
 roller::protocol::Node node{can_transport, channels, storage};
 roller::drive::Controller controller;
 roller::ModuleManager<2> modules;
@@ -55,15 +64,26 @@ extern "C" void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* adc) {
     if (auto fault = channels.asynchronous_fault.exchange(0, std::memory_order_acq_rel); fault) {
         controller.trip(static_cast<roller::drive::Fault>(fault));
     }
-    roller::drive::Command command;
+    roller::drive::ValidatedCommand command;
     if (channels.commands.latest(command)) {
-        if ((command.controlword & 0x80) && !(previous_controlword & 0x80)) {
+        if ((command.get().controlword & 0x80) && !(previous_controlword & 0x80)) {
             board.acknowledge_encoder();
         }
-        previous_controlword = command.controlword;
+        previous_controlword = command.get().controlword;
         controller.command(command);
     }
-    board.apply(controller.step(board.sample()));
+    const auto sample = board.sample();
+#ifdef ROLLER_BENCH
+    const auto sampled = DWT->CYCCNT;
+#endif
+    const auto output = controller.step(sample);
+#ifdef ROLLER_BENCH
+    const auto controlled = DWT->CYCCNT;
+#endif
+    board.apply(output);
+#ifdef ROLLER_BENCH
+    roller::bench::record(start, sampled, controlled, DWT->CYCCNT);
+#endif
     const auto count = channels.sample_count.fetch_add(1, std::memory_order_relaxed) + 1;
     if (count % 20 == 0) {
         (void)channels.telemetry.push(controller.telemetry());
@@ -113,7 +133,7 @@ extern "C" void vApplicationStackOverflowHook(TaskHandle_t, char*) {
     roller_panic("stack overflow");
 }
 extern "C" void roller_app_start() {
-    controller = roller::drive::Controller{node.load_settings()};
+    controller = roller::drive::Controller{node.load_settings(), roller::platform::cordic_sincos};
     if (!modules.add(board) || !modules.add(node) || !modules.start()) {
         roller_panic("module initialization");
     }
@@ -128,17 +148,26 @@ extern "C" void roller_app_start() {
                 for (;;) {
                     // Batch is bounded so a busy bus cannot monopolize this task.
                     RollerCanFrame frame{};
+#ifdef ROLLER_BENCH
+                    if (roller::bench::receive(frame))
+                        node.receive(frame);
+#else
                     for (unsigned i = 0; i < 64 && board.receive(frame); ++i) {
                         node.receive(frame);
                     }
+#endif
                     const auto now = DWT->CYCCNT;
                     node.process((now - previous) / (SystemCoreClock / 1000000U));
+#ifdef ROLLER_BENCH
+                    roller::bench::publish(node.telemetry(), channels.isr_max_cycles.load(),
+                                           channels.sampling_epoch.load());
+#endif
                     previous = now;
                     if (node.reset_requested()) {
                         board.gate_off();
                         NVIC_SystemReset();
                     }
-                    (void)xTaskDelayUntil(&wake, pdMS_TO_TICKS(1));
+                    roller::rtos::wait_period(wake, pdMS_TO_TICKS(1));
                 }
             },
             nullptr, "canopen", 3)) {
@@ -147,12 +176,13 @@ extern "C" void roller_app_start() {
     if (!supervisor_task.start(
             [](void*) {
                 auto wake = xTaskGetTickCount();
-                std::uint32_t old_samples = 0, old_can = 0;
+                roller::ProgressWatchdog progress;
                 for (;;) {
-                    (void)xTaskDelayUntil(&wake, pdMS_TO_TICKS(10));
+                    roller::rtos::wait_period(wake, pdMS_TO_TICKS(10));
                     const auto samples = channels.sample_count.load(std::memory_order_relaxed);
                     const auto can = channels.can_task_ticks.load(std::memory_order_relaxed);
-                    if (samples == old_samples || can == old_can || channels.inhibit.load()) {
+                    const auto epoch = channels.sampling_epoch.load(std::memory_order_acquire);
+                    if (!progress.observe(samples, can, epoch) || channels.inhibit.load()) {
                         channels.inhibit.store(true);
                         board.gate_off();
                         channels.asynchronous_fault.store(
@@ -160,8 +190,6 @@ extern "C" void roller_app_start() {
                     } else if (HAL_IWDG_Refresh(&hiwdg) != HAL_OK) {
                         roller_panic("watchdog refresh");
                     }
-                    old_samples = samples;
-                    old_can = can;
                     if (HAL_GPIO_ReadPin(USER_BUTTON_GPIO_Port, USER_BUTTON_Pin) == GPIO_PIN_RESET) {
                         board.gate_off();
                         channels.asynchronous_fault.store(

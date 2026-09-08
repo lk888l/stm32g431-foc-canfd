@@ -7,13 +7,21 @@
 
 namespace roller::drivers {
 enum class EncoderError { timeout, crc, status, disconnected };
-inline std::uint8_t crc8(std::span<const std::uint8_t> bytes) noexcept {
-    std::uint8_t crc = 0xFF;
-    for (auto byte : bytes) {
-        crc ^= byte;
+inline constexpr auto crc8_table = []() consteval {
+    std::array<std::uint8_t, 256> table{};
+    for (unsigned i = 0; i < table.size(); ++i) {
+        auto crc = static_cast<std::uint8_t>(i);
         for (int bit = 0; bit < 8; ++bit) {
             crc = static_cast<std::uint8_t>((crc & 0x80) ? (crc << 1) ^ 0x1D : crc << 1);
         }
+        table[i] = crc;
+    }
+    return table;
+}();
+inline std::uint8_t crc8(std::span<const std::uint8_t> bytes) noexcept {
+    std::uint8_t crc = 0xFF;
+    for (auto byte : bytes) {
+        crc = crc8_table[crc ^ byte];
     }
     return static_cast<std::uint8_t>(~crc);
 }

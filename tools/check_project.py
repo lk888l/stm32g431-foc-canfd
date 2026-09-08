@@ -14,12 +14,17 @@ def require(condition, message):
 
 
 def contains(file, token):
-    require(token in (ROOT / file).read_text(encoding="utf8"), f"{file}: missing {token}")
+    require(
+        token in (ROOT / file).read_text(encoding="utf8"), f"{file}: missing {token}"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--elf", type=Path)
+    parser.add_argument(
+        "--bench", action="store_true", help="Expect the opt-in SWD transport"
+    )
     args = parser.parse_args()
     ioc = dict(
         line.split("=", 1)
@@ -45,11 +50,14 @@ def main():
         "PB2.GPIO_Label": "PWM_ENABLE",
         "PB4.GPIO_Label": "CAN_STB",
         "PA4.GPIO_Label": "ENC_CS",
+        "VP_CORDIC_VS_CORDIC.Mode": "CORDIC_Activate",
     }
     for key, value in expected.items():
         require(ioc.get(key) == value, f"{key}: expected {value}, got {ioc.get(key)}")
     for file, token in [
         ("Core/Src/main.c", "roller_app_start();"),
+        ("Core/Src/main.c", "MX_CORDIC_Init();"),
+        ("Core/Src/cordic.c", "__HAL_RCC_CORDIC_CLK_ENABLE();"),
         ("Core/Src/stm32g4xx_it.c", "HAL_ADC_IRQHandler(&hadc1);"),
         ("Core/Src/stm32g4xx_it.c", "HAL_GPIO_EXTI_IRQHandler(DRV_FAULT_Pin);"),
         ("Core/Src/stm32g4xx_it.c", "HAL_FDCAN_IRQHandler(&hfdcan1);"),
@@ -86,6 +94,20 @@ def main():
             ["arm-none-eabi-nm", "--defined-only", str(args.elf)], text=True
         )
         symbols = {line.split()[-1] for line in output.splitlines() if line.split()}
+        bench_symbols = {
+            "roller_bench_rx",
+            "roller_bench_tx",
+            "roller_bench_state",
+            "roller_bench_request",
+        }
+        require(
+            (
+                bench_symbols.issubset(symbols)
+                if args.bench
+                else not bench_symbols.intersection(symbols)
+            ),
+            "Bench transport must match --bench; production firmware must exclude it",
+        )
         for symbol in (
             "ADC1_2_IRQHandler",
             "EXTI0_IRQHandler",
@@ -114,7 +136,9 @@ def main():
             not symbols.intersection(banned),
             "allocator linked: " + str(symbols.intersection(banned)),
         )
-        require(not any(re.match(r"_Zn[aw]", s) for s in symbols), "C++ operator new linked")
+        require(
+            not any(re.match(r"_Zn[aw]", s) for s in symbols), "C++ operator new linked"
+        )
     print(
         "PASS: CubeMX, interrupt ownership, local dependencies"
         + (", static-allocation ELF" if args.elf else "")

@@ -2,9 +2,11 @@
 #include "roller/control/math.hpp"
 #include "roller/core/module.hpp"
 #include "roller/core/parameter_journal.hpp"
+#include "roller/core/progress_watchdog.hpp"
 #include "roller/core/spsc_queue.hpp"
 #include "roller/drive/controller.hpp"
 #include "roller/drive/state_machine.hpp"
+#include "roller/drivers/rollercan_sensing.hpp"
 #include "roller/drivers/tli5012.hpp"
 #include <bit>
 #include <cmath>
@@ -28,6 +30,27 @@ using namespace roller;
 using namespace roller::control;
 
 static void math_tests() {
+    CHECK(std::abs(drivers::bus_voltage(2238, 3.304F) - 11.655F) < 0.015F);
+    for (int i = -40000; i <= 40000; ++i) {
+        const auto input = static_cast<float>(i) * 0.01F;
+        auto expected = std::fmod(input, tau);
+        if (expected < 0) {
+            expected += tau;
+        }
+        CHECK(std::abs(wrap_signed(wrap(input) - expected)) < 3e-5F);
+    }
+    for (int x = -10; x <= 10; ++x) {
+        for (int y = -10; y <= 10; ++y) {
+            const Dq input{static_cast<float>(x), static_cast<float>(y)};
+            const auto limited = limit_vector(input, 3);
+            CHECK(std::hypot(limited.d, limited.q) <= 3.00001F);
+            CHECK(std::abs(limited.d * input.q - limited.q * input.d) < 1e-5F);
+        }
+    }
+    const auto huge = limit_vector({1e30F, -1e30F}, 3);
+    CHECK(std::abs(std::hypot(huge.d, huge.q) - 3) < 1e-5F);
+    CHECK(limit_vector({0, 0}, 3).d == 0);
+    CHECK(limit_vector({0, std::numeric_limits<float>::quiet_NaN()}, 3).q == 0);
     for (int n = -720; n <= 720; ++n) {
         const float angle = static_cast<float>(n) * pi / 180;
         const auto sine = std::sin(angle), cosine = std::cos(angle);
@@ -70,6 +93,21 @@ static void math_tests() {
 }
 static void state_tests() {
     using namespace drive;
+    Command raw;
+    raw.velocity = 1;
+    auto valid = ValidatedCommand::make(raw);
+    CHECK(valid && valid->get().velocity == 1);
+    raw.velocity = std::numeric_limits<float>::quiet_NaN();
+    CHECK(!ValidatedCommand::make(raw));
+    CHECK(valid->get().velocity == 1);
+    ProgressWatchdog progress;
+    CHECK(progress.observe(100, 5, 1));
+    CHECK(progress.observe(200, 6, 1));
+    CHECK(!progress.observe(200, 7, 1));
+    CHECK(progress.observe(200, 7, 2));
+    CHECK(!progress.observe(200, 7, 2));
+    CHECK(progress.observe(400, 9, 2));
+    CHECK(!progress.observe(500, 9, 2));
     StateMachine sm;
     CHECK(sm.step(0x0F, true, true, false) == State::disabled);
     CHECK(sm.step(0x06, true, true, false) == State::ready);
@@ -94,6 +132,18 @@ static void encoder_tests() {
     // CRC-8/SAE-J1850 published check vector; encoder uses the same polynomial/init/xor.
     const std::uint8_t check[]{'1', '2', '3', '4', '5', '6', '7', '8', '9'};
     CHECK(drivers::crc8(check) == 0x4B);
+    for (unsigned value = 0; value < 65536; ++value) {
+        const std::uint8_t frame[]{0x80, 0x21, static_cast<std::uint8_t>(value >> 8),
+                                   static_cast<std::uint8_t>(value)};
+        std::uint8_t crc = 0xFF;
+        for (auto byte : frame) {
+            crc ^= byte;
+            for (int bit = 0; bit < 8; ++bit) {
+                crc = static_cast<std::uint8_t>((crc & 0x80) ? (crc << 1) ^ 0x1D : crc << 1);
+            }
+        }
+        CHECK(drivers::crc8(frame) == static_cast<std::uint8_t>(~crc));
+    }
     const std::uint8_t payload[]{0x80, 0x21, 0x20, 0x00};
     const auto safety = static_cast<std::uint16_t>(0xFE00 | drivers::crc8(payload));
     auto angle = drivers::decode_angle(0x2000, safety);
@@ -288,9 +338,9 @@ static void protocol_tests() {
     auto process = [&] {
         CHECK(channels.telemetry.push(telem));
         node.process(1000);
-        drive::Command c;
+        drive::ValidatedCommand c;
         CHECK(channels.commands.latest(c));
-        return c;
+        return c.get();
     };
     (void)process();
     CHECK(!bus.sent.empty());
@@ -488,13 +538,42 @@ static void current_loop_tests() {
 }
 static void commissioning_tests() {
     using namespace drive;
+    {
+        Controller controller{
+            {}, [](float) noexcept -> SinCos { return {std::numeric_limits<float>::quiet_NaN(), 1}; }};
+        Sample sample{{}, 12, 1, 25, true, true, true, true};
+        CHECK(!controller.step(sample).enable);
+        CHECK(controller.telemetry().fault == Fault::configuration);
+        CHECK(std::isfinite(controller.telemetry().iq));
+        Command command;
+        command.controlword = 0x80;
+        controller.command(command);
+        for (int i = 0; i < 19; ++i) {
+            (void)controller.step(sample);
+        }
+        // A reset edge on the 1 kHz tick cannot clear a still-failing CORDIC.
+        CHECK(controller.telemetry().fault == Fault::configuration);
+    }
+    {
+        Controller controller;
+        Command command;
+        command.calibration_request = 1;
+        Sample sample{{}, 12, 1, 25, true, true, true, true};
+        controller.command(command);
+        CHECK(controller.step(sample).enable);
+        command.calibration_permitted = false;
+        controller.command(command);
+        CHECK(!controller.step(sample).enable);
+        CHECK(controller.telemetry().calibration == Calibration::failed);
+        CHECK(controller.telemetry().fault == Fault::communication);
+    }
     for (auto direction : {1, -1, 0}) {
         Controller controller;
         Command command{};
         command.calibration_request = 1;
         Sample sample{{}, 12, 1, 25, true, true, true, true};
         float previous = 0, total = 0;
-        for (int i = 0; i < 60020; ++i) {
+        for (int i = 0; i < 140020; ++i) {
             if (i % 20 == 0) {
                 ++command.sequence;
                 controller.command(command);
@@ -542,9 +621,9 @@ struct ProtocolFixture {
     drive::Command process(std::uint32_t us = 1000) {
         CHECK(channels.telemetry.push(telemetry));
         node.process(us);
-        drive::Command command;
+        drive::ValidatedCommand command;
         CHECK(channels.commands.latest(command));
-        return command;
+        return command.get();
     }
     RollerCanFrame sdo(std::uint16_t index, std::uint8_t sub, std::uint8_t cs, std::uint32_t value = 0) {
         RollerCanFrame frame{

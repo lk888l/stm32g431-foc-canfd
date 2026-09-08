@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Debug', 'Release', 'Host')][string]$Preset = 'Debug',
+    [ValidateSet('Debug', 'Release', 'Host', 'Bench')][string]$Preset = 'Debug',
     [string]$Python = 'python',
     [int]$Jobs = 8
 )
@@ -21,7 +21,9 @@ try {
         ctest --preset Host
         if ($LASTEXITCODE -ne 0) { throw 'Host tests failed' }
     } else {
-        & $Python tools/check_project.py --elf "build/$Preset/canopen_foc.elf"
+        $benchArguments = @()
+        if ($Preset -eq 'Bench') { $benchArguments = @('--bench') }
+        & $Python tools/check_project.py --elf "build/$Preset/canopen_foc.elf" @benchArguments
         if ($LASTEXITCODE -ne 0) { throw 'ELF contract check failed' }
     }
 } finally { Pop-Location }

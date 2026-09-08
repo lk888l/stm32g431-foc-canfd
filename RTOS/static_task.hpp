@@ -4,6 +4,14 @@
 #include "task.h"
 #include <array>
 namespace roller::rtos {
+inline void wait_period(TickType_t& wake, TickType_t period) noexcept {
+    if (xTaskDelayUntil(&wake, period) == pdFALSE) {
+        // Skip missed releases after bounded flash maintenance. Catch-up loops
+        // would publish duplicate commands and falsely report stalled actors.
+        wake = xTaskGetTickCount();
+        (void)xTaskDelayUntil(&wake, period);
+    }
+}
 // Static task storage; the wrapper is deliberately non-movable and non-copyable.
 // Firmware tasks live until reset and never refer to a stack-local owner.
 template <std::size_t Words> class StaticTask {

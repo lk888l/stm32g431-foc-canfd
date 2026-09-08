@@ -1,18 +1,24 @@
 #include "board.hpp"
 #include "301/CO_driver.h"
 #include "adc.h"
+#include "cordic_math.hpp"
 #include "fdcan.h"
 #include "main.h"
+#include "roller/drivers/rollercan_sensing.hpp"
 #include "spi.h"
 #include "stm32g4xx_ll_adc.h"
 #include "tim.h"
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#ifdef ROLLER_BENCH
+#include "bench.hpp"
+#endif
 
 namespace roller::platform {
 namespace {
 constexpr std::uint32_t cpu_hz = 160000000;
+constexpr std::uint32_t encoder_turnaround_cycles = 32; // 200 ns; SSC minimum is 130 ns.
 void delay_cycles(std::uint32_t cycles) {
     const auto start = DWT->CYCCNT;
     while (static_cast<std::uint32_t>(DWT->CYCCNT - start) < cycles) {
@@ -30,6 +36,9 @@ Result Board::on_start() noexcept {
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+    if (!initialize_cordic()) {
+        return std::unexpected(Error::hardware);
+    }
 #ifdef DEBUG
     __HAL_DBGMCU_FREEZE_IWDG();
 #endif
@@ -82,7 +91,7 @@ Result Board::on_start() noexcept {
     auto command = exchange(0x8001);
     const auto moder = GPIOA->MODER;
     MODIFY_REG(GPIOA->MODER, GPIO_MODER_MODE7, 0);
-    delay_cycles(160);
+    delay_cycles(encoder_turnaround_cycles);
     auto status = exchange(0xFFFF);
     auto safety = exchange(0xFFFF);
     HAL_GPIO_WritePin(ENC_CS_GPIO_Port, ENC_CS_Pin, GPIO_PIN_SET);
@@ -105,6 +114,9 @@ Result Board::on_stop() noexcept {
 }
 Result Board::start_sampling() noexcept {
     gate_off();
+#ifdef ROLLER_BENCH
+    bench::sampling_restart();
+#endif
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 2000);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 2000);
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_3, 2000);
@@ -121,6 +133,7 @@ Result Board::start_sampling() noexcept {
             return std::unexpected(Error::hardware);
         }
     }
+    channels_.sampling_epoch.fetch_add(1, std::memory_order_release);
     return {};
 }
 void Board::stop_sampling() noexcept {
@@ -162,7 +175,7 @@ std::expected<float, drivers::EncoderError> Board::angle() noexcept {
     auto sent = exchange(0x8021);
     const auto mode = GPIOA->MODER;
     MODIFY_REG(GPIOA->MODER, GPIO_MODER_MODE7, 0); // DATA turnaround: MOSI high impedance.
-    delay_cycles(160);
+    delay_cycles(encoder_turnaround_cycles);
     auto value = exchange(0xFFFF);
     auto safety = exchange(0xFFFF);
     HAL_GPIO_WritePin(ENC_CS_GPIO_Port, ENC_CS_Pin, GPIO_PIN_SET);
@@ -182,7 +195,7 @@ void Board::acknowledge_encoder() noexcept {
     (void)exchange(0x8001);
     const auto mode = GPIOA->MODER;
     MODIFY_REG(GPIOA->MODER, GPIO_MODER_MODE7, 0);
-    delay_cycles(160);
+    delay_cycles(encoder_turnaround_cycles);
     (void)exchange(0xFFFF);
     (void)exchange(0xFFFF);
     HAL_GPIO_WritePin(ENC_CS_GPIO_Port, ENC_CS_Pin, GPIO_PIN_SET);
@@ -212,12 +225,12 @@ drive::Sample Board::sample() noexcept {
         }
     }
     drive::Sample s{};
-    // GAIN pin floating (R11 not fitted): 1 V/A. Positive phase current flows
-    // out of OUTx into the winding, opposite to current flowing into the LS FET.
+    // GAIN floating: 1 V/A. Verified with a stationary positive alpha vector:
+    // A sources current (ADC above offset), B/C sink current (below offset).
     const auto scale = vdda_ / 4095.0F;
-    s.current = {(offsets_[0] - raw[0]) * scale, (offsets_[1] - raw[1]) * scale,
-                 (offsets_[2] - raw[2]) * scale};
-    s.bus_voltage = static_cast<float>(ADC1->JDR4) * scale * 11.0F; // R18=22k, R19=2.2k.
+    s.current = {(raw[0] - offsets_[0]) * scale, (raw[1] - offsets_[1]) * scale,
+                 (raw[2] - offsets_[2]) * scale};
+    s.bus_voltage = drivers::bus_voltage(static_cast<std::uint16_t>(ADC1->JDR4), vdda_);
     s.mcu_temperature = temperature_;
     const auto position = angle();
     s.encoder_ok = position.has_value();

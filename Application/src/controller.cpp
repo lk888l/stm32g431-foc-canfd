@@ -32,10 +32,21 @@ bool Controller::valid_command(const Command& c) noexcept {
            c.max_torque <= 1000 && c.torque >= -1000 && c.torque <= 1000 && c.following_window > 0;
 }
 void Controller::command(const Command& value) noexcept {
-    if (!valid_command(value)) {
+    const auto validated = ValidatedCommand::make(value);
+    if (!validated) {
         trip(Fault::configuration);
         return;
     }
+    command(*validated);
+}
+std::optional<ValidatedCommand> ValidatedCommand::make(const Command& value) noexcept {
+    if (!Controller::valid_command(value)) {
+        return std::nullopt;
+    }
+    return ValidatedCommand{value};
+}
+void Controller::command(const ValidatedCommand& validated) noexcept {
+    const auto& value = validated.get();
     if (value.sequence != command_.sequence) {
         command_age_ = 0;
     }
@@ -161,8 +172,8 @@ void Controller::outer_step(const Sample& s) noexcept {
     previous_cw_ = command_.controlword;
 }
 Output Controller::calibration_step(const Sample& s) noexcept {
-    // Explicit bench command only: 0.6 V, one electrical revolution, then align
-    // at zero. Any safety trip aborts before another duty is applied.
+    // Four electrical turns average cogging/stiction; measure the endpoint only
+    // after settling. One weak, moving endpoint gave inconsistent pole counts.
     ++calibration_tick_;
     float theta = 0;
     if (calibration_ == Calibration::align && calibration_tick_ >= 10000) {
@@ -170,23 +181,24 @@ Output Controller::calibration_step(const Sample& s) noexcept {
         calibration_tick_ = 0;
         calibration_ = Calibration::sweep;
     } else if (calibration_ == Calibration::sweep) {
-        theta = tau * static_cast<float>(calibration_tick_) / 40000.0F;
-        if (calibration_tick_ >= 40000) {
-            calibration_end_ = tracker_.position();
-            const auto travel = calibration_end_ - calibration_start_;
-            const auto estimate = tau / std::abs(travel);
-            if (!std::isfinite(estimate) || estimate < 0.8F || estimate > 32.2F ||
-                std::abs(estimate - std::round(estimate)) > 0.2F) {
-                calibration_ = Calibration::failed;
-                trip(Fault::calibration);
-                return {};
-            }
-            config_.pole_pairs = static_cast<std::uint16_t>(std::round(estimate));
-            config_.direction = travel > 0 ? 1 : -1;
+        theta = wrap(4.0F * tau * static_cast<float>(calibration_tick_) / 120000.0F);
+        if (calibration_tick_ >= 120000) {
             calibration_ = Calibration::settle;
             calibration_tick_ = 0;
+            theta = 0;
         }
     } else if (calibration_ == Calibration::settle && calibration_tick_ >= 10000) {
+        calibration_end_ = tracker_.position();
+        const auto travel = calibration_end_ - calibration_start_;
+        const auto estimate = 4.0F * tau / std::abs(travel);
+        if (!std::isfinite(estimate) || estimate < 0.8F || estimate > 32.2F ||
+            std::abs(estimate - std::round(estimate)) > 0.15F || std::abs(tracker_.velocity()) > 0.1F) {
+            calibration_ = Calibration::failed;
+            trip(Fault::calibration);
+            return {};
+        }
+        config_.pole_pairs = static_cast<std::uint16_t>(std::round(estimate));
+        config_.direction = travel > 0 ? 1 : -1;
         config_.electrical_offset =
             wrap(static_cast<float>(config_.direction) * static_cast<float>(config_.pole_pairs) * s.angle);
         config_.calibrated = 1;
@@ -195,15 +207,17 @@ Output Controller::calibration_step(const Sample& s) noexcept {
         reset_loops();
         return {};
     }
-    return {svpwm({0.6F * std::cos(theta), 0.6F * std::sin(theta)}, s.bus_voltage), true};
+    const auto [sine, cosine] = trig_(theta);
+    if (!std::isfinite(sine) || !std::isfinite(cosine)) {
+        trip(Fault::configuration);
+        return {};
+    }
+    return {svpwm({1.2F * cosine, 1.2F * sine}, s.bus_voltage), true};
 }
 Output Controller::step(const Sample& s) noexcept {
     ++ticks_;
     if (command_age_ < 0xFFFFFFFFU) {
         ++command_age_;
-    }
-    if (!valid_config(config_)) {
-        trip(Fault::configuration);
     }
     const bool finite = std::isfinite(s.bus_voltage) && std::isfinite(s.mcu_temperature) &&
                         std::isfinite(s.current.a) && std::isfinite(s.current.b) &&
@@ -248,8 +262,9 @@ Output Controller::step(const Sample& s) noexcept {
     const auto angle =
         wrap(static_cast<float>(config_.direction) * static_cast<float>(config_.pole_pairs) * s.angle -
              config_.electrical_offset);
-    const auto sine = std::sin(angle), cosine = std::cos(angle);
-    const auto currents = (finite && angle_ok) ? park(clarke(s.current), sine, cosine) : Dq{};
+    const auto [sine, cosine] = trig_(angle);
+    const bool trig_ok = std::isfinite(sine) && std::isfinite(cosine);
+    const auto currents = (finite && angle_ok && trig_ok) ? park(clarke(s.current), sine, cosine) : Dq{};
     telemetry_.id = currents.d;
     telemetry_.iq = currents.q;
     if (!initialized_) {
@@ -259,10 +274,14 @@ Output Controller::step(const Sample& s) noexcept {
     if (ticks_ % 20 == 0) {
         outer_step(s);
     }
+    // A simultaneous controlword reset must not clear a persistent math fault.
+    if (!trig_ok) {
+        trip(Fault::configuration);
+    }
     if (command_.calibration_request != calibration_seen_) {
         calibration_seen_ = command_.calibration_request;
-        if (state_.state() == State::disabled && !command_.operational && fault_ == Fault::none &&
-            s.current_calibrated) {
+        if (state_.state() == State::disabled && command_.calibration_permitted && !command_.operational &&
+            fault_ == Fault::none && s.current_calibrated) {
             calibration_ = Calibration::align;
             calibration_tick_ = 0;
             config_.calibrated = 0;
@@ -272,15 +291,17 @@ Output Controller::step(const Sample& s) noexcept {
     if (fault_ != Fault::none) {
         // Fast faults update the state immediately, but only the 1 kHz state
         // machine may consume controlword edges (especially fault reset).
+        if (state_.state() != State::fault) {
+            reset_loops();
+        }
         state_.trip();
         if (calibration_ == Calibration::align || calibration_ == Calibration::sweep ||
             calibration_ == Calibration::settle) {
             calibration_ = Calibration::failed;
         }
-        reset_loops();
     } else if (calibration_ == Calibration::align || calibration_ == Calibration::sweep ||
                calibration_ == Calibration::settle) {
-        if (command_.operational || command_age_ > 2000) {
+        if (!command_.calibration_permitted || command_.operational || command_age_ > 2000) {
             trip(Fault::communication);
             calibration_ = Calibration::failed;
         } else {

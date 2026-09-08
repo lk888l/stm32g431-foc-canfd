@@ -25,6 +25,14 @@ if(ROLLER_HOST_TESTS)
     return()
 endif()
 add_executable(${PROJECT_NAME})
+if(CMAKE_EXE_LINKER_FLAGS MATCHES "nano.specs")
+    message(FATAL_ERROR "Stale newlib-nano linker flags exceed the ISR budget. Run cmake --fresh --preset <preset>.")
+endif()
+# The 20 kHz path must meet the same deadline in Debug and Release. Keep
+# symbols and IEEE finite checks; optimize only the controller and ISR sources.
+target_compile_options(roller_domain PRIVATE -O2)
+set_source_files_properties(Application/src/application.cpp Platform/STM32/board.cpp Platform/STM32/cordic_math.cpp
+    Platform/STM32/bench.cpp PROPERTIES COMPILE_OPTIONS -O2)
 # CubeMX owns this entire subdirectory. No generated build file is hand patched.
 add_subdirectory(cmake/stm32cubemx)
 set(FREERTOS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/FreeRTOS-Kernel)
@@ -32,8 +40,13 @@ add_library(freertos_kernel STATIC
     ${FREERTOS_ROOT}/tasks.c ${FREERTOS_ROOT}/queue.c ${FREERTOS_ROOT}/list.c
     ${FREERTOS_ROOT}/portable/GCC/ARM_CM4F/port.c)
 target_include_directories(freertos_kernel PUBLIC RTOS ${FREERTOS_ROOT}/include ${FREERTOS_ROOT}/portable/GCC/ARM_CM4F)
-target_sources(${PROJECT_NAME} PRIVATE Application/src/application.cpp Platform/STM32/board.cpp Platform/STM32/flash_store.cpp)
+target_sources(${PROJECT_NAME} PRIVATE Application/src/application.cpp Platform/STM32/board.cpp Platform/STM32/flash_store.cpp Platform/STM32/cordic_math.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE Platform/STM32)
+option(ROLLER_BENCH "Use SWD CANopen transport and profiling for an attended bench session" OFF)
+if(ROLLER_BENCH)
+    target_sources(${PROJECT_NAME} PRIVATE Platform/STM32/bench.cpp)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ROLLER_BENCH=1)
+endif()
 target_link_libraries(${PROJECT_NAME} stm32cubemx roller_protocol freertos_kernel m)
 target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow;-Werror>)
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)

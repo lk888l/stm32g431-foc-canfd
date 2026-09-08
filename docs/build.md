@@ -4,7 +4,9 @@
 
 固件使用 C++23，测试过 Arm GNU Toolchain 15.2.1。推荐主机也使用 GCC：MinGW GCC 16.1 或 Ubuntu 24.04 GCC 13.3 均已通过测试。CMake 最低 3.25，Ninja，Python 3.10+。工具链不随源代码复制；FreeRTOS、CANopenNode、HAL 和 CMSIS 均已复制，构建无网络依赖。
 
-`tools/build.ps1 -Preset Debug|Release|Host` 运行 OD 一致性、依赖哈希、CubeMX 约束、构建及 ELF/主机测试；Python 不在 PATH 时可传 `-Python /path/to/python.exe`。普通 CMake 命令见根 README。`CMakePresets.json` 中 Debug/Release 为 ARM，Host 为本机，不要对 Host 使用 ARM toolchain。
+`tools/build.ps1 -Preset Debug|Release|Host|Bench` 运行 OD 一致性、依赖哈希、CubeMX 约束、构建及 ELF/主机测试；Python 不在 PATH 时可传 `-Python /path/to/python.exe`。普通 CMake 命令见根 README。`CMakePresets.json` 中 Debug/Release/Bench 为 ARM，Host 为本机，不要对 Host 使用 ARM toolchain。
+
+本次移除了 newlib-nano，已有构建目录先运行 `cmake --fresh --preset Debug` / `Release`，清除 CMake 缓存中的旧链接选项。热路径始终为 `-O2`；不使用破坏 NaN 检查的 `-ffast-math`。`Bench` 显式启用 SWD 邮箱，Debug/Release 默认使用物理 CAN，ELF 检查会拒绝误混入的 Bench 符号。
 
 Linux sanitizer：
 
@@ -44,6 +46,7 @@ Windows 命令行调用安装的 CubeMX Java 前端，与图形界面使用同�
 - ADC JEOS、4 路注入序列、内部温度/VREF 虚拟通道、规则组不连续单 rank。
 - TIM1 CH3=A / CH2=B / CH1=C、ARR 4000、CH4 CCR 3680、OC4REF TRGO。
 - HSI 160 MHz、SPI1 16-bit mode 1、CAN 1 Mbit/s；nFAULT IRQ 及所有 HAL IRQ 调用仍存在。
+- CORDIC Activated、`MX_CORDIC_Init()` 与时钟使能仍由 CubeMX 生成；sin/cos 算法模式由 C++ 适配器配置。
 - 应用入口仍位于 `main.c` 的 USER CODE 2；异常处理仍调用 `roller_panic`。
 - FreeRTOS 自有三种异常处理函数没有 CubeMX 的重复定义；实际 linker 仍预留 62/63 页。
 

@@ -4,6 +4,7 @@ import argparse
 import re
 from pathlib import Path
 import subprocess
+from vendor import check_source_layout
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -42,6 +43,7 @@ def main():
         "TIM1.PeriodNoDither": "4000",
         "TIM1.PulseNoDither_4": "3680",
         "TIM1.CounterMode": "TIM_COUNTERMODE_CENTERALIGNED1",
+        "NVIC.TIM1_UP_TIM16_IRQn": r"true\:2\:0\:false\:false\:true\:true\:true\:true",
         "PA8.GPIO_Label": "PWM_C",
         "PA9.GPIO_Label": "PWM_B",
         "PA10.GPIO_Label": "PWM_A",
@@ -51,6 +53,24 @@ def main():
         "PB4.GPIO_Label": "CAN_STB",
         "PA4.GPIO_Label": "ENC_CS",
         "VP_CORDIC_VS_CORDIC.Mode": "CORDIC_Activate",
+        "FDCAN1.FrameFormat": "FDCAN_FRAME_FD_BRS",
+        "FDCAN1.DataPrescaler": "1",
+        "FDCAN1.DataSyncJumpWidth": "4",
+        "FDCAN1.DataTimeSeg1": "23",
+        "FDCAN1.DataTimeSeg2": "8",
+        "ADC1.NbrOfConversion": "4",
+        "ADC1.InjNumberOfConversion": "2",
+        "ADC1.DiscontinuousConvMode": "DISABLE",
+        "ADC1.DMAContinuousRequests": "ENABLE",
+        "ADC1.ExternalTrigConv": "ADC_EXTERNALTRIG_T1_TRGO",
+        "ADC1.ExternalTrigConvEdge": "ADC_EXTERNALTRIGCONVEDGE_RISING",
+        "ADC1.ExternalTrigInjecConv": "ADC_INJECTED_SOFTWARE_START",
+        "ADC1.Overrun": "ADC_OVR_DATA_PRESERVED",
+        "Dma.ADC1.0.Instance": "DMA1_Channel1",
+        "Dma.ADC1.0.Mode": "DMA_CIRCULAR",
+        "Dma.ADC1.0.PeriphDataAlignment": "DMA_PDATAALIGN_HALFWORD",
+        "Dma.ADC1.0.MemDataAlignment": "DMA_MDATAALIGN_HALFWORD",
+        "Dma.ADC1.0.Priority": "DMA_PRIORITY_VERY_HIGH",
     }
     for key, value in expected.items():
         require(ioc.get(key) == value, f"{key}: expected {value}, got {ioc.get(key)}")
@@ -62,19 +82,32 @@ def main():
         ("Core/Src/stm32g4xx_it.c", "HAL_GPIO_EXTI_IRQHandler(DRV_FAULT_Pin);"),
         ("Core/Src/stm32g4xx_it.c", "HAL_FDCAN_IRQHandler(&hfdcan1);"),
         ("Core/Src/stm32g4xx_it.c", "HAL_TIM_IRQHandler(&htim6);"),
+        ("Core/Src/stm32g4xx_it.c", "roller_app_encoder_trigger();"),
         ("Core/Src/adc.c", "ADC_EOC_SEQ_CONV"),
         ("Core/Src/adc.c", "ADC_CLOCK_SYNC_PCLK_DIV4"),
-        ("Core/Src/adc.c", "ADC_EXTERNALTRIGINJEC_T1_TRGO"),
-        ("Core/Src/adc.c", "hadc1.Init.DiscontinuousConvMode = ENABLE;"),
+        ("Core/Src/adc.c", "ADC_EXTERNALTRIG_T1_TRGO"),
+        ("Core/Src/adc.c", "ADC_INJECTED_SOFTWARE_START"),
+        ("Core/Src/adc.c", "hadc1.Init.DiscontinuousConvMode = DISABLE;"),
+        ("Core/Src/adc.c", "hadc1.Init.DMAContinuousRequests = ENABLE;"),
+        ("Core/Src/adc.c", "DMA_REQUEST_ADC1"),
+        ("Core/Src/adc.c", "__HAL_LINKDMA(adcHandle,DMA_Handle,hdma_adc1);"),
+        ("Core/Src/main.c", "MX_DMA_Init();"),
+        ("Core/Src/dma.c", "__HAL_RCC_DMAMUX1_CLK_ENABLE();"),
+        ("Core/Src/stm32g4xx_it.c", "HAL_DMA_IRQHandler(&hdma_adc1);"),
         ("Core/Src/adc.c", "ADC_CHANNEL_TEMPSENSOR_ADC1"),
         ("Core/Src/adc.c", "ADC_CHANNEL_VREFINT"),
         ("Core/Src/spi.c", "SPI_DATASIZE_16BIT"),
         ("Core/Src/spi.c", "SPI_PHASE_2EDGE"),
         ("Core/Src/tim.c", "sConfigOC.Pulse = 3680;"),
-        ("Core/Src/fdcan.c", "FDCAN_FRAME_CLASSIC"),
+        ("Core/Src/tim.c", "TIM_COUNTERMODE_CENTERALIGNED1"),
+        ("Core/Src/tim.c", "HAL_NVIC_SetPriority(TIM1_UP_TIM16_IRQn, 2, 0);"),
+        ("Core/Src/fdcan.c", "FDCAN_FRAME_FD_BRS"),
         ("Core/Src/fdcan.c", "hfdcan1.Init.NominalPrescaler = 5;"),
         ("Core/Src/fdcan.c", "hfdcan1.Init.NominalTimeSeg1 = 25;"),
         ("Core/Src/fdcan.c", "hfdcan1.Init.NominalTimeSeg2 = 6;"),
+        ("Core/Src/fdcan.c", "hfdcan1.Init.DataPrescaler = 1;"),
+        ("Core/Src/fdcan.c", "hfdcan1.Init.DataTimeSeg1 = 23;"),
+        ("Core/Src/fdcan.c", "hfdcan1.Init.DataTimeSeg2 = 8;"),
         ("RTOS/FreeRTOSConfig.h", "#define configSUPPORT_DYNAMIC_ALLOCATION 0"),
         ("linker/STM32G431CB_FLASH.ld", "LENGTH = 124K"),
         ("CMakeLists.txt", "set(CMAKE_CXX_STANDARD 23)"),
@@ -86,14 +119,17 @@ def main():
             not re.search(r"void\s+" + handler + r"\s*\(", interrupts),
             "FreeRTOS must own " + handler,
         )
-    require(not (ROOT / ".gitmodules").exists(), "submodules are prohibited")
-    for entry in (ROOT / "ThirdParty").rglob(".git"):
-        raise SystemExit("Nested git checkout is prohibited: " + str(entry))
+    check_source_layout()
     if args.elf:
         output = subprocess.check_output(
             ["arm-none-eabi-nm", "--defined-only", str(args.elf)], text=True
         )
-        symbols = {line.split()[-1] for line in output.splitlines() if line.split()}
+        symbol_types = {
+            parts[-1]: parts[-2]
+            for line in output.splitlines()
+            if len(parts := line.split()) >= 2
+        }
+        symbols = set(symbol_types)
         bench_symbols = {
             "roller_bench_rx",
             "roller_bench_tx",
@@ -110,6 +146,10 @@ def main():
         )
         for symbol in (
             "ADC1_2_IRQHandler",
+            "TIM1_UP_TIM16_IRQHandler",
+            "DMA1_Channel1_IRQHandler",
+            "DMA1_Channel2_IRQHandler",
+            "DMA1_Channel3_IRQHandler",
             "EXTI0_IRQHandler",
             "FDCAN1_IT0_IRQHandler",
             "SVC_Handler",
@@ -119,6 +159,10 @@ def main():
             "roller_debug",
         ):
             require(symbol in symbols, "missing ELF symbol " + symbol)
+            require(
+                symbol_types[symbol].upper() != "W",
+                "weak default handler in ELF: " + symbol,
+            )
         banned = {
             "malloc",
             "calloc",

@@ -2,6 +2,7 @@
 #ifndef ROLLER_OD_H
 #define ROLLER_OD_H
 #include "301/CO_ODinterface.h"
+#include "OD_v1.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -73,6 +74,14 @@ typedef struct {
     uint32_t x1600_06;
     uint32_t x1600_07;
     uint32_t x1600_08;
+    uint32_t x1600_09;
+    uint32_t x1600_0a;
+    uint32_t x1600_0b;
+    uint32_t x1600_0c;
+    uint32_t x1600_0d;
+    uint32_t x1600_0e;
+    uint32_t x1600_0f;
+    uint32_t x1600_10;
     uint8_t x1601_00;
     uint32_t x1601_01;
     uint32_t x1601_02;
@@ -82,6 +91,14 @@ typedef struct {
     uint32_t x1601_06;
     uint32_t x1601_07;
     uint32_t x1601_08;
+    uint32_t x1601_09;
+    uint32_t x1601_0a;
+    uint32_t x1601_0b;
+    uint32_t x1601_0c;
+    uint32_t x1601_0d;
+    uint32_t x1601_0e;
+    uint32_t x1601_0f;
+    uint32_t x1601_10;
     uint8_t x1602_00;
     uint32_t x1602_01;
     uint32_t x1602_02;
@@ -91,6 +108,14 @@ typedef struct {
     uint32_t x1602_06;
     uint32_t x1602_07;
     uint32_t x1602_08;
+    uint32_t x1602_09;
+    uint32_t x1602_0a;
+    uint32_t x1602_0b;
+    uint32_t x1602_0c;
+    uint32_t x1602_0d;
+    uint32_t x1602_0e;
+    uint32_t x1602_0f;
+    uint32_t x1602_10;
     uint8_t x1603_00;
     uint32_t x1603_01;
     uint32_t x1603_02;
@@ -100,6 +125,14 @@ typedef struct {
     uint32_t x1603_06;
     uint32_t x1603_07;
     uint32_t x1603_08;
+    uint32_t x1603_09;
+    uint32_t x1603_0a;
+    uint32_t x1603_0b;
+    uint32_t x1603_0c;
+    uint32_t x1603_0d;
+    uint32_t x1603_0e;
+    uint32_t x1603_0f;
+    uint32_t x1603_10;
     uint8_t x1800_00;
     uint32_t x1800_01;
     uint8_t x1800_02;
@@ -133,6 +166,14 @@ typedef struct {
     uint32_t x1a00_06;
     uint32_t x1a00_07;
     uint32_t x1a00_08;
+    uint32_t x1a00_09;
+    uint32_t x1a00_0a;
+    uint32_t x1a00_0b;
+    uint32_t x1a00_0c;
+    uint32_t x1a00_0d;
+    uint32_t x1a00_0e;
+    uint32_t x1a00_0f;
+    uint32_t x1a00_10;
     uint8_t x1a01_00;
     uint32_t x1a01_01;
     uint32_t x1a01_02;
@@ -142,6 +183,14 @@ typedef struct {
     uint32_t x1a01_06;
     uint32_t x1a01_07;
     uint32_t x1a01_08;
+    uint32_t x1a01_09;
+    uint32_t x1a01_0a;
+    uint32_t x1a01_0b;
+    uint32_t x1a01_0c;
+    uint32_t x1a01_0d;
+    uint32_t x1a01_0e;
+    uint32_t x1a01_0f;
+    uint32_t x1a01_10;
     uint8_t x1a02_00;
     uint32_t x1a02_01;
     uint32_t x1a02_02;
@@ -151,6 +200,14 @@ typedef struct {
     uint32_t x1a02_06;
     uint32_t x1a02_07;
     uint32_t x1a02_08;
+    uint32_t x1a02_09;
+    uint32_t x1a02_0a;
+    uint32_t x1a02_0b;
+    uint32_t x1a02_0c;
+    uint32_t x1a02_0d;
+    uint32_t x1a02_0e;
+    uint32_t x1a02_0f;
+    uint32_t x1a02_10;
     uint8_t x1a03_00;
     uint32_t x1a03_01;
     uint32_t x1a03_02;
@@ -160,6 +217,14 @@ typedef struct {
     uint32_t x1a03_06;
     uint32_t x1a03_07;
     uint32_t x1a03_08;
+    uint32_t x1a03_09;
+    uint32_t x1a03_0a;
+    uint32_t x1a03_0b;
+    uint32_t x1a03_0c;
+    uint32_t x1a03_0d;
+    uint32_t x1a03_0e;
+    uint32_t x1a03_0f;
+    uint32_t x1a03_10;
     uint8_t x2001_00;
     uint8_t x2001_01;
     uint32_t x2001_02;
@@ -245,6 +310,7 @@ extern OD_entry_t ODList[];
 extern OD_t* OD;
 void OD_reset_defaults(void);
 void OD_restore_parameters(const RollerOD* saved);
+void OD_restore_parameters_v1(const RollerODV1* saved);
 #define OD_ENTRY_H1000 (&ODList[0])
 #define OD_ENTRY_H1001 (&ODList[1])
 #define OD_ENTRY_H1003 (&ODList[2])

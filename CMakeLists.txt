@@ -24,6 +24,21 @@ if(ROLLER_HOST_TESTS)
     add_subdirectory(Tests)
     return()
 endif()
+# These are vendored source files, not submodules or files supplied by an IDE.
+# Fail here with an actionable error instead of an opaque target_sources failure.
+foreach(driver_file IN ITEMS
+    Drivers/STM32G4xx_HAL_Driver/Src/stm32g4xx_hal_tim.c
+    Drivers/STM32G4xx_HAL_Driver/Inc/stm32g4xx_hal.h
+    Drivers/CMSIS/Device/ST/STM32G4xx/Include/stm32g431xx.h
+    Drivers/CMSIS/Include/core_cm4.h)
+    if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${driver_file}")
+        message(FATAL_ERROR
+            "Missing vendored STM32CubeG4 V1.6.3 file: ${driver_file}\n"
+            "Restore the complete Drivers directory from this repository, then run "
+            "python tools/vendor.py --check. See docs/build.md. "
+            "A fresh CMake cache cannot repair missing sources.")
+    endif()
+endforeach()
 add_executable(${PROJECT_NAME})
 if(CMAKE_EXE_LINKER_FLAGS MATCHES "nano.specs")
     message(FATAL_ERROR "Stale newlib-nano linker flags exceed the ISR budget. Run cmake --fresh --preset <preset>.")
@@ -32,7 +47,7 @@ endif()
 # symbols and IEEE finite checks; optimize only the controller and ISR sources.
 target_compile_options(roller_domain PRIVATE -O2)
 set_source_files_properties(Application/src/application.cpp Platform/STM32/board.cpp Platform/STM32/cordic_math.cpp
-    Platform/STM32/bench.cpp PROPERTIES COMPILE_OPTIONS -O2)
+    Platform/STM32/ssc_dma.cpp Platform/STM32/pwm_dma.cpp Platform/STM32/bench.cpp PROPERTIES COMPILE_OPTIONS -O2)
 # CubeMX owns this entire subdirectory. No generated build file is hand patched.
 add_subdirectory(cmake/stm32cubemx)
 set(FREERTOS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/FreeRTOS-Kernel)
@@ -41,6 +56,7 @@ add_library(freertos_kernel STATIC
     ${FREERTOS_ROOT}/portable/GCC/ARM_CM4F/port.c)
 target_include_directories(freertos_kernel PUBLIC RTOS ${FREERTOS_ROOT}/include ${FREERTOS_ROOT}/portable/GCC/ARM_CM4F)
 target_sources(${PROJECT_NAME} PRIVATE Application/src/application.cpp Platform/STM32/board.cpp Platform/STM32/flash_store.cpp Platform/STM32/cordic_math.cpp)
+target_sources(${PROJECT_NAME} PRIVATE Platform/STM32/ssc_dma.cpp Platform/STM32/pwm_dma.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE Platform/STM32)
 option(ROLLER_BENCH "Use SWD CANopen transport and profiling for an attended bench session" OFF)
 if(ROLLER_BENCH)

@@ -8,8 +8,11 @@ auto& transport(CO_CANmodule_t* m) {
 bool send(CO_CANmodule_t* m, CO_CANtx_t* b) {
     RollerCanFrame frame{};
     frame.ident = static_cast<uint16_t>(b->ident);
-    frame.size = b->DLC;
+    frame.fd = b->DLC > 8;
+    frame.brs = frame.fd;
+    frame.size = roller_can_wire_size(b->DLC);
     frame.synchronous = b->syncFlag;
+    // Value initialization above leaves every DLC padding byte zero.
     std::memcpy(frame.data, b->data, b->DLC);
     auto& t = transport(m);
     return t.send(t.context, &frame);
@@ -28,7 +31,8 @@ void CO_CANsetNormalMode(CO_CANmodule_t* m) {
 }
 CO_ReturnError_t CO_CANmodule_init(CO_CANmodule_t* m, void* pointer, CO_CANrx_t rx[], uint16_t rn,
                                    CO_CANtx_t tx[], uint16_t tn, uint16_t bitrate) {
-    if (!m || !pointer || !rx || !tx || bitrate != 1000) {
+    if (!m || !pointer || !rx || !tx ||
+        !roller_can_valid_nominal_bitrate(static_cast<uint32_t>(bitrate) * 1000U)) {
         return CO_ERROR_ILLEGAL_ARGUMENT;
     }
     *m = {};
@@ -63,7 +67,7 @@ CO_ReturnError_t CO_CANrxBufferInit(CO_CANmodule_t* m, uint16_t index, uint16_t 
 }
 CO_CANtx_t* CO_CANtxBufferInit(CO_CANmodule_t* m, uint16_t index, uint16_t ident, bool_t rtr, uint8_t size,
                                bool_t sync) {
-    if (!m || index >= m->txSize || size > 8 || ident > 0x7FF || rtr) {
+    if (!m || index >= m->txSize || size > CO_PDO_MAX_SIZE || ident > 0x7FF || rtr) {
         return nullptr;
     }
     auto& b = m->txArray[index];
@@ -74,7 +78,7 @@ CO_CANtx_t* CO_CANtxBufferInit(CO_CANmodule_t* m, uint16_t index, uint16_t ident
     return &b;
 }
 CO_ReturnError_t CO_CANsend(CO_CANmodule_t* m, CO_CANtx_t* b) {
-    if (!m || !b || b->DLC > 8) {
+    if (!m || !b || b->DLC > CO_PDO_MAX_SIZE || b->ident > 0x7FF) {
         return CO_ERROR_ILLEGAL_ARGUMENT;
     }
     if (b->bufferFull) {

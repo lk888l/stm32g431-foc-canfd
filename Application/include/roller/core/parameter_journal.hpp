@@ -23,6 +23,9 @@ class ParameterJournal final : public ParameterStore {
     static constexpr std::size_t max_payload = 2000;
     explicit ParameterJournal(ParameterPages& pages) noexcept : pages_(pages) {}
     bool read(std::span<std::byte> data) noexcept override {
+        if (data.empty() || data.size() > max_payload) {
+            return false;
+        }
         const auto a = inspect(0, data.size()), b = inspect(1, data.size());
         const auto index = b.valid && (!a.valid || newer(b.header.sequence, a.header.sequence)) ? 1U : 0U;
         if (!(index ? b : a).valid) {
@@ -36,7 +39,9 @@ class ParameterJournal final : public ParameterStore {
         if (data.empty() || data.size() > max_payload) {
             return false;
         }
-        const auto a = inspect(0, data.size()), b = inspect(1, data.size());
+        // Select the active page independently of payload length. A schema
+        // upgrade must preserve the previous version until the new commit.
+        const auto a = inspect(0), b = inspect(1);
         const bool latest_b = b.valid && (!a.valid || newer(b.header.sequence, a.header.sequence));
         const auto target = latest_b ? 0U : 1U;
         Header header{static_cast<std::uint32_t>(data.size()),
@@ -71,11 +76,8 @@ class ParameterJournal final : public ParameterStore {
     static std::uint32_t checksum(const Header& header, std::span<const std::byte> payload) noexcept {
         return crc32(payload, crc32(std::as_bytes(std::span{&header, 1}).first(offsetof(Header, crc))));
     }
-    Record inspect(unsigned index, std::size_t size) const noexcept {
+    Record inspect(unsigned index, std::size_t expected_size = 0) const noexcept {
         Record record{};
-        if (size == 0 || size > max_payload) {
-            return record;
-        }
         const auto bytes = pages_.page(index);
         std::uint64_t marker{};
         std::memcpy(&marker, bytes.data() + ParameterPages::page_size - 8, 8);
@@ -83,7 +85,9 @@ class ParameterJournal final : public ParameterStore {
             return record;
         }
         std::memcpy(&record.header, bytes.data(), sizeof(Header));
-        if (record.header.length != size || record.header.version != 1) {
+        const auto size = record.header.length;
+        if (size == 0 || size > max_payload || (expected_size != 0 && size != expected_size) ||
+            record.header.version != 1) {
             return record;
         }
         record.valid = checksum(record.header, bytes.subspan(sizeof(Header), size)) == record.header.crc;

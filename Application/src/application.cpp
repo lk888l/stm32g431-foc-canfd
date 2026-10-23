@@ -29,8 +29,10 @@ roller::drive::Controller controller;
 roller::ModuleManager<2> modules;
 roller::rtos::StaticTask<1024> can_task;
 roller::rtos::StaticTask<256> supervisor_task;
-std::uint32_t previous_sample_cycle{};
+std::uint32_t previous_sample_cycle{}, frame_start_cycle{};
+void control_ready();
 std::uint16_t previous_controlword{};
+roller::drive::ValidatedCommand incoming_command;
 struct DebugStatus {
     volatile std::uint32_t panic{}, can_stack_free{}, supervisor_stack_free{}, sample_count{},
         max_isr_cycles{};
@@ -51,26 +53,33 @@ extern "C" void roller_panic(const char* reason) {
         __NOP(); // IWDG resets the MCU; debugger may inspect roller_debug.
     }
 }
-extern "C" void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* adc) {
-    if (adc->Instance != ADC1 || !board.sampling()) {
+namespace {
+void begin_frame(unsigned half) {
+    if (!board.sampling()) {
         return;
     }
     const auto start = DWT->CYCCNT;
+    frame_start_cycle = start;
     const bool active = (GPIOB->ODR & PWM_ENABLE_Pin) != 0;
     if (previous_sample_cycle && start - previous_sample_cycle > 12000 && active) {
         controller.trip(roller::drive::Fault::timing);
+        board.gate_off();
     }
     previous_sample_cycle = start;
+    if (!board.begin_sample(half, control_ready)) {
+        controller.trip(roller::drive::Fault::timing);
+        control_ready();
+    }
+}
+void control_ready() {
+    if (!board.sampling()) {
+        return;
+    }
+    // The ADC DMA frame joins the encoder transaction launched at the PWM
+    // period boundary. Include any remaining SPI wait in the deadline/profile.
+    const auto start = frame_start_cycle;
     if (auto fault = channels.asynchronous_fault.exchange(0, std::memory_order_acq_rel); fault) {
         controller.trip(static_cast<roller::drive::Fault>(fault));
-    }
-    roller::drive::ValidatedCommand command;
-    if (channels.commands.latest(command)) {
-        if ((command.get().controlword & 0x80) && !(previous_controlword & 0x80)) {
-            board.acknowledge_encoder();
-        }
-        previous_controlword = command.get().controlword;
-        controller.command(command);
     }
     const auto sample = board.sample();
 #ifdef ROLLER_BENCH
@@ -95,6 +104,33 @@ extern "C" void HAL_ADCEx_InjectedConvCpltCallback(ADC_HandleTypeDef* adc) {
     if (elapsed > 7200) {
         board.gate_off();
         controller.trip(roller::drive::Fault::timing);
+    }
+}
+} // namespace
+extern "C" void roller_app_encoder_trigger() {
+    if (!board.sampling()) {
+        return;
+    }
+    if (auto fault = channels.asynchronous_fault.exchange(0, std::memory_order_acq_rel); fault) {
+        controller.trip(static_cast<roller::drive::Fault>(fault));
+    }
+    if (channels.commands.latest(incoming_command)) {
+        if ((incoming_command.get().controlword & 0x80) && !(previous_controlword & 0x80)) {
+            board.acknowledge_encoder();
+        }
+        previous_controlword = incoming_command.get().controlword;
+        controller.command(incoming_command);
+    }
+    board.encoder_trigger();
+}
+extern "C" void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* adc) {
+    if (adc->Instance == ADC1) {
+        begin_frame(0);
+    }
+}
+extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* adc) {
+    if (adc->Instance == ADC1) {
+        begin_frame(1);
     }
 }
 extern "C" void HAL_ADC_ErrorCallback(ADC_HandleTypeDef*) {

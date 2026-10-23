@@ -22,7 +22,7 @@ bool Controller::valid_command(const Command& c) noexcept {
             return false;
         }
     }
-    const bool mode = c.mode == Mode::none || c.mode == Mode::position || c.mode == Mode::velocity ||
+    const bool mode = c.mode == Mode::none || is_position_mode(c.mode) || c.mode == Mode::velocity ||
                       c.mode == Mode::torque || c.mode == Mode::mit;
     return mode && std::abs(c.position) <= 100000 && std::abs(c.mit_position) <= 100000 &&
            std::abs(c.velocity) <= 40 && std::abs(c.mit_velocity) <= 40 && std::abs(c.mit_torque) <= 1 &&
@@ -101,14 +101,23 @@ void Controller::outer_step(const Sample& s) noexcept {
         iq_target_ = velocity_pi_.step((velocity_setpoint_ - telemetry_.velocity) * tau, 0.001F, max_i);
     } else {
         switch (command_.mode) {
-        case Mode::position: {
+        case Mode::single_turn_position:
+        case Mode::multi_turn_position: {
             const bool trigger = (command_.controlword & 0x10) && !(previous_cw_ & 0x10);
             if (!(command_.controlword & 0x10)) {
                 setpoint_ack_ = false;
             }
             if (trigger) {
-                target_position_ =
-                    command_.position + ((command_.controlword & 0x40) ? telemetry_.position : 0.0F);
+                const bool relative = (command_.controlword & 0x40) != 0;
+                if (command_.mode == Mode::single_turn_position) {
+                    // Resolve once at the set-point edge. Re-wrapping against
+                    // the live position would let the target jump by a turn.
+                    const auto delta = command_.position - (relative ? 0.0F : telemetry_.position);
+                    // Exactly half a turn is consistently taken negatively.
+                    target_position_ = telemetry_.position + delta - std::floor(delta + 0.5F);
+                } else {
+                    target_position_ = command_.position + (relative ? telemetry_.position : 0.0F);
+                }
                 setpoint_ack_ = true;
             }
             const auto error = target_position_ - position_setpoint_;
@@ -322,7 +331,7 @@ Output Controller::step(const Sample& s) noexcept {
                                                              (output.duty.c - common) * s.bus_voltage}
                                                        : Abc{};
     telemetry_.statusword = state_.status() | (setpoint_ack_ ? 0x1000 : 0);
-    if (state_.state() == State::enabled && command_.mode == Mode::position &&
+    if (state_.state() == State::enabled && is_position_mode(command_.mode) &&
         std::abs(target_position_ - telemetry_.position) < 0.001F && std::abs(telemetry_.velocity) < 0.05F) {
         telemetry_.statusword |= 0x0400;
     }

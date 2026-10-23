@@ -5,7 +5,18 @@
 #include <optional>
 
 namespace roller::drive {
-enum class Mode : std::int8_t { none = 0, position = 1, velocity = 3, torque = 4, mit = 5 };
+enum class Mode : std::int8_t {
+    single_turn_position = -1, // Manufacturer mode: nearest equivalent mechanical angle.
+    none = 0,
+    multi_turn_position = 1,
+    position = multi_turn_position, // Preserve the original mode 1 API and wire format.
+    velocity = 3,
+    torque = 4,
+    mit = 5
+};
+constexpr bool is_position_mode(Mode mode) noexcept {
+    return mode == Mode::multi_turn_position || mode == Mode::single_turn_position;
+}
 enum class Fault : std::uint16_t {
     none = 0,
     overcurrent = 0x2310,
@@ -35,7 +46,9 @@ struct Command {
     std::int16_t torque{};
     Mode mode{Mode::none};
     bool operational{}, network_ok{true}, calibration_permitted{true};
-    float position{}, velocity{}; // HexMeow units: revolutions, revolutions/second.
+    // Revolutions and revolutions/second. Mode 1 uses the continuous encoder
+    // position; mode -1 wraps absolute/relative requests to the nearest turn.
+    float position{}, velocity{};
     float profile_velocity{2}, acceleration{2}, deceleration{2}, quick_deceleration{4};
     float mit_position{}, mit_velocity{}, mit_torque{}, mit_kp{}, mit_kd{};
     float following_window{0.25F};

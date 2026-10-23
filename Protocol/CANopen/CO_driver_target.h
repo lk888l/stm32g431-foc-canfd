@@ -25,6 +25,10 @@ typedef double float64_t;
     (CO_CONFIG_RPDO_ENABLE | CO_CONFIG_TPDO_ENABLE | CO_CONFIG_RPDO_TIMERS_ENABLE |                          \
      CO_CONFIG_TPDO_TIMERS_ENABLE | CO_CONFIG_PDO_SYNC_ENABLE | CO_CONFIG_PDO_OD_IO_ACCESS |                 \
      CO_CONFIG_FLAG_OD_DYNAMIC)
+// Manufacturer extension: classic CANopen services with up to 64-byte FD PDOs.
+// CANopenNode already sizes mapping and payload buffers through these macros.
+#define CO_PDO_MAX_SIZE 64U
+#define CO_PDO_MAX_MAPPED_ENTRIES 16U
 #define CO_CONFIG_TIME 0
 #define CO_CONFIG_LEDS 0
 #define CO_CONFIG_LSS 0
@@ -46,7 +50,7 @@ typedef struct {
 } CO_CANrx_t;
 typedef struct {
     uint32_t ident;
-    uint8_t DLC, data[8];
+    uint8_t DLC, data[64];
     bool_t bufferFull, syncFlag;
 } CO_CANtx_t;
 typedef struct {

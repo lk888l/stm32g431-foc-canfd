@@ -4,6 +4,7 @@
 #include "roller/core/module.hpp"
 #include "roller/core/storage.hpp"
 #include "roller/drivers/tli5012.hpp"
+#include "ssc_dma.hpp"
 #include <atomic>
 #include <expected>
 
@@ -17,6 +18,8 @@ class Board final : public Module {
     [[nodiscard]] Result start_sampling() noexcept;
     void stop_sampling() noexcept;
     [[nodiscard]] drive::Sample sample() noexcept;
+    [[nodiscard]] bool begin_sample(unsigned half, void (*ready)()) noexcept;
+    void encoder_trigger() noexcept;
     void apply(drive::Output output) noexcept;
     static void gate_off() noexcept;
     [[nodiscard]] RollerCanTransport can_transport() noexcept;
@@ -33,11 +36,24 @@ class Board final : public Module {
   private:
     Result on_start() noexcept override;
     Result on_stop() noexcept override;
-    std::expected<std::uint16_t, drivers::EncoderError> exchange(std::uint16_t value) noexcept;
-    std::expected<float, drivers::EncoderError> angle() noexcept;
+    bool read_encoder(std::uint16_t command) noexcept;
+    static void encoder_complete(std::uint16_t value, std::uint16_t safety, bool ok) noexcept;
     bool housekeeping() noexcept;
+    [[nodiscard]] drive::Sample current_sample() noexcept;
+    static Board* encoder_owner_;
+    SscDma encoder_;
+    alignas(4) std::array<std::uint16_t, 8> adc_dma_{};
+    std::array<std::uint16_t, 4> adc_frame_{};
+    drive::Sample prepared_sample_{};
+    void (*sample_ready_)(){};
+    std::atomic<bool> encoder_finished_{};
+    bool encoder_ok_{}, sample_pending_{}, acknowledge_requested_{}, acknowledging_{}, reset_frame_{},
+        reading_status_{}, encoder_cycle_started_{};
+    float encoder_angle_{};
+    bool housekeeping_ok_{true}, housekeeping_pending_{};
     Channels& channels_;
-    SpscQueue<RollerCanFrame, 64> can_rx_;
+    // Bound SRAM use with full 64-byte FD frames; overflow remains a latched fault.
+    SpscQueue<RollerCanFrame, 32> can_rx_;
     std::atomic<bool> sampling_{};
     std::atomic<std::uint32_t> rx_errors_{};
     float vdda_{3.3F}, temperature_{25};
@@ -46,9 +62,7 @@ class Board final : public Module {
     std::array<float, 3> offsets_{2048, 2048, 2048};
     std::uint32_t offset_samples_{};
     bool offsets_valid_{};
-    std::uint32_t housekeeping_ticks_{}, regular_started_{};
-    std::uint16_t raw_temperature_{};
-    std::uint8_t regular_stage_{};
+    std::uint32_t housekeeping_ticks_{}, housekeeping_started_{};
     std::uint16_t bus_off_ticks_{};
     std::uint32_t synchronous_tx_mask_{}; // CAN task owns hardware TX bookkeeping.
 };

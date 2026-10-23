@@ -58,6 +58,14 @@ static const RollerOD defaults = {
     .x1600_06 = 0U,
     .x1600_07 = 0U,
     .x1600_08 = 0U,
+    .x1600_09 = 0U,
+    .x1600_0a = 0U,
+    .x1600_0b = 0U,
+    .x1600_0c = 0U,
+    .x1600_0d = 0U,
+    .x1600_0e = 0U,
+    .x1600_0f = 0U,
+    .x1600_10 = 0U,
     .x1601_00 = 3U,
     .x1601_01 = 1618608160U,
     .x1601_02 = 1614807056U,
@@ -67,6 +75,14 @@ static const RollerOD defaults = {
     .x1601_06 = 0U,
     .x1601_07 = 0U,
     .x1601_08 = 0U,
+    .x1601_09 = 0U,
+    .x1601_0a = 0U,
+    .x1601_0b = 0U,
+    .x1601_0c = 0U,
+    .x1601_0d = 0U,
+    .x1601_0e = 0U,
+    .x1601_0f = 0U,
+    .x1601_10 = 0U,
     .x1602_00 = 3U,
     .x1602_01 = 1618018320U,
     .x1602_02 = 1614807056U,
@@ -76,6 +92,14 @@ static const RollerOD defaults = {
     .x1602_06 = 0U,
     .x1602_07 = 0U,
     .x1602_08 = 0U,
+    .x1602_09 = 0U,
+    .x1602_0a = 0U,
+    .x1602_0b = 0U,
+    .x1602_0c = 0U,
+    .x1602_0d = 0U,
+    .x1602_0e = 0U,
+    .x1602_0f = 0U,
+    .x1602_10 = 0U,
     .x1603_00 = 2U,
     .x1603_01 = 537133600U,
     .x1603_02 = 537133856U,
@@ -85,6 +109,14 @@ static const RollerOD defaults = {
     .x1603_06 = 0U,
     .x1603_07 = 0U,
     .x1603_08 = 0U,
+    .x1603_09 = 0U,
+    .x1603_0a = 0U,
+    .x1603_0b = 0U,
+    .x1603_0c = 0U,
+    .x1603_0d = 0U,
+    .x1603_0e = 0U,
+    .x1603_0f = 0U,
+    .x1603_10 = 0U,
     .x1800_00 = 5U,
     .x1800_01 = 3221225856U,
     .x1800_02 = 1U,
@@ -118,6 +150,14 @@ static const RollerOD defaults = {
     .x1a00_06 = 0U,
     .x1a00_07 = 0U,
     .x1a00_08 = 0U,
+    .x1a00_09 = 0U,
+    .x1a00_0a = 0U,
+    .x1a00_0b = 0U,
+    .x1a00_0c = 0U,
+    .x1a00_0d = 0U,
+    .x1a00_0e = 0U,
+    .x1a00_0f = 0U,
+    .x1a00_10 = 0U,
     .x1a01_00 = 2U,
     .x1a01_01 = 1617166368U,
     .x1a01_02 = 1617690656U,
@@ -127,6 +167,14 @@ static const RollerOD defaults = {
     .x1a01_06 = 0U,
     .x1a01_07 = 0U,
     .x1a01_08 = 0U,
+    .x1a01_09 = 0U,
+    .x1a01_0a = 0U,
+    .x1a01_0b = 0U,
+    .x1a01_0c = 0U,
+    .x1a01_0d = 0U,
+    .x1a01_0e = 0U,
+    .x1a01_0f = 0U,
+    .x1a01_10 = 0U,
     .x1a02_00 = 2U,
     .x1a02_01 = 1618411536U,
     .x1a02_02 = 570556448U,
@@ -136,6 +184,14 @@ static const RollerOD defaults = {
     .x1a02_06 = 0U,
     .x1a02_07 = 0U,
     .x1a02_08 = 0U,
+    .x1a02_09 = 0U,
+    .x1a02_0a = 0U,
+    .x1a02_0b = 0U,
+    .x1a02_0c = 0U,
+    .x1a02_0d = 0U,
+    .x1a02_0e = 0U,
+    .x1a02_0f = 0U,
+    .x1a02_10 = 0U,
     .x1a03_00 = 0U,
     .x1a03_01 = 0U,
     .x1a03_02 = 0U,
@@ -145,11 +201,19 @@ static const RollerOD defaults = {
     .x1a03_06 = 0U,
     .x1a03_07 = 0U,
     .x1a03_08 = 0U,
+    .x1a03_09 = 0U,
+    .x1a03_0a = 0U,
+    .x1a03_0b = 0U,
+    .x1a03_0c = 0U,
+    .x1a03_0d = 0U,
+    .x1a03_0e = 0U,
+    .x1a03_0f = 0U,
+    .x1a03_10 = 0U,
     .x2001_00 = 4U,
     .x2001_01 = 1U,
     .x2001_02 = 1000000U,
-    .x2001_03 = 1000000U,
-    .x2001_04 = 0U,
+    .x2001_03 = 5000000U,
+    .x2001_04 = 1U,
     .x2003_00 = 7U,
     .x2003_01 = 0.0F,
     .x2003_02 = 0.0F,
@@ -282,6 +346,14 @@ RollerOD OD_RAM = {
     .x1600_06 = 0U,
     .x1600_07 = 0U,
     .x1600_08 = 0U,
+    .x1600_09 = 0U,
+    .x1600_0a = 0U,
+    .x1600_0b = 0U,
+    .x1600_0c = 0U,
+    .x1600_0d = 0U,
+    .x1600_0e = 0U,
+    .x1600_0f = 0U,
+    .x1600_10 = 0U,
     .x1601_00 = 3U,
     .x1601_01 = 1618608160U,
     .x1601_02 = 1614807056U,
@@ -291,6 +363,14 @@ RollerOD OD_RAM = {
     .x1601_06 = 0U,
     .x1601_07 = 0U,
     .x1601_08 = 0U,
+    .x1601_09 = 0U,
+    .x1601_0a = 0U,
+    .x1601_0b = 0U,
+    .x1601_0c = 0U,
+    .x1601_0d = 0U,
+    .x1601_0e = 0U,
+    .x1601_0f = 0U,
+    .x1601_10 = 0U,
     .x1602_00 = 3U,
     .x1602_01 = 1618018320U,
     .x1602_02 = 1614807056U,
@@ -300,6 +380,14 @@ RollerOD OD_RAM = {
     .x1602_06 = 0U,
     .x1602_07 = 0U,
     .x1602_08 = 0U,
+    .x1602_09 = 0U,
+    .x1602_0a = 0U,
+    .x1602_0b = 0U,
+    .x1602_0c = 0U,
+    .x1602_0d = 0U,
+    .x1602_0e = 0U,
+    .x1602_0f = 0U,
+    .x1602_10 = 0U,
     .x1603_00 = 2U,
     .x1603_01 = 537133600U,
     .x1603_02 = 537133856U,
@@ -309,6 +397,14 @@ RollerOD OD_RAM = {
     .x1603_06 = 0U,
     .x1603_07 = 0U,
     .x1603_08 = 0U,
+    .x1603_09 = 0U,
+    .x1603_0a = 0U,
+    .x1603_0b = 0U,
+    .x1603_0c = 0U,
+    .x1603_0d = 0U,
+    .x1603_0e = 0U,
+    .x1603_0f = 0U,
+    .x1603_10 = 0U,
     .x1800_00 = 5U,
     .x1800_01 = 3221225856U,
     .x1800_02 = 1U,
@@ -342,6 +438,14 @@ RollerOD OD_RAM = {
     .x1a00_06 = 0U,
     .x1a00_07 = 0U,
     .x1a00_08 = 0U,
+    .x1a00_09 = 0U,
+    .x1a00_0a = 0U,
+    .x1a00_0b = 0U,
+    .x1a00_0c = 0U,
+    .x1a00_0d = 0U,
+    .x1a00_0e = 0U,
+    .x1a00_0f = 0U,
+    .x1a00_10 = 0U,
     .x1a01_00 = 2U,
     .x1a01_01 = 1617166368U,
     .x1a01_02 = 1617690656U,
@@ -351,6 +455,14 @@ RollerOD OD_RAM = {
     .x1a01_06 = 0U,
     .x1a01_07 = 0U,
     .x1a01_08 = 0U,
+    .x1a01_09 = 0U,
+    .x1a01_0a = 0U,
+    .x1a01_0b = 0U,
+    .x1a01_0c = 0U,
+    .x1a01_0d = 0U,
+    .x1a01_0e = 0U,
+    .x1a01_0f = 0U,
+    .x1a01_10 = 0U,
     .x1a02_00 = 2U,
     .x1a02_01 = 1618411536U,
     .x1a02_02 = 570556448U,
@@ -360,6 +472,14 @@ RollerOD OD_RAM = {
     .x1a02_06 = 0U,
     .x1a02_07 = 0U,
     .x1a02_08 = 0U,
+    .x1a02_09 = 0U,
+    .x1a02_0a = 0U,
+    .x1a02_0b = 0U,
+    .x1a02_0c = 0U,
+    .x1a02_0d = 0U,
+    .x1a02_0e = 0U,
+    .x1a02_0f = 0U,
+    .x1a02_10 = 0U,
     .x1a03_00 = 0U,
     .x1a03_01 = 0U,
     .x1a03_02 = 0U,
@@ -369,11 +489,19 @@ RollerOD OD_RAM = {
     .x1a03_06 = 0U,
     .x1a03_07 = 0U,
     .x1a03_08 = 0U,
+    .x1a03_09 = 0U,
+    .x1a03_0a = 0U,
+    .x1a03_0b = 0U,
+    .x1a03_0c = 0U,
+    .x1a03_0d = 0U,
+    .x1a03_0e = 0U,
+    .x1a03_0f = 0U,
+    .x1a03_10 = 0U,
     .x2001_00 = 4U,
     .x2001_01 = 1U,
     .x2001_02 = 1000000U,
-    .x2001_03 = 1000000U,
-    .x2001_04 = 0U,
+    .x2001_03 = 5000000U,
+    .x2001_04 = 1U,
     .x2003_00 = 7U,
     .x2003_01 = 0.0F,
     .x2003_02 = 0.0F,
@@ -451,6 +579,189 @@ RollerOD OD_RAM = {
 };
 void OD_reset_defaults(void) { OD_RAM = defaults; }
 void OD_restore_parameters(const RollerOD* saved) {
+    OD_RAM.x1005_00 = saved->x1005_00;
+    OD_RAM.x1006_00 = saved->x1006_00;
+    OD_RAM.x1007_00 = saved->x1007_00;
+    OD_RAM.x1014_00 = saved->x1014_00;
+    OD_RAM.x1015_00 = saved->x1015_00;
+    OD_RAM.x1016_01 = saved->x1016_01;
+    OD_RAM.x1017_00 = saved->x1017_00;
+    OD_RAM.x1400_01 = saved->x1400_01;
+    OD_RAM.x1400_02 = saved->x1400_02;
+    OD_RAM.x1400_05 = saved->x1400_05;
+    OD_RAM.x1401_01 = saved->x1401_01;
+    OD_RAM.x1401_02 = saved->x1401_02;
+    OD_RAM.x1401_05 = saved->x1401_05;
+    OD_RAM.x1402_01 = saved->x1402_01;
+    OD_RAM.x1402_02 = saved->x1402_02;
+    OD_RAM.x1402_05 = saved->x1402_05;
+    OD_RAM.x1403_01 = saved->x1403_01;
+    OD_RAM.x1403_02 = saved->x1403_02;
+    OD_RAM.x1403_05 = saved->x1403_05;
+    OD_RAM.x1600_00 = saved->x1600_00;
+    OD_RAM.x1600_01 = saved->x1600_01;
+    OD_RAM.x1600_02 = saved->x1600_02;
+    OD_RAM.x1600_03 = saved->x1600_03;
+    OD_RAM.x1600_04 = saved->x1600_04;
+    OD_RAM.x1600_05 = saved->x1600_05;
+    OD_RAM.x1600_06 = saved->x1600_06;
+    OD_RAM.x1600_07 = saved->x1600_07;
+    OD_RAM.x1600_08 = saved->x1600_08;
+    OD_RAM.x1600_09 = saved->x1600_09;
+    OD_RAM.x1600_0a = saved->x1600_0a;
+    OD_RAM.x1600_0b = saved->x1600_0b;
+    OD_RAM.x1600_0c = saved->x1600_0c;
+    OD_RAM.x1600_0d = saved->x1600_0d;
+    OD_RAM.x1600_0e = saved->x1600_0e;
+    OD_RAM.x1600_0f = saved->x1600_0f;
+    OD_RAM.x1600_10 = saved->x1600_10;
+    OD_RAM.x1601_00 = saved->x1601_00;
+    OD_RAM.x1601_01 = saved->x1601_01;
+    OD_RAM.x1601_02 = saved->x1601_02;
+    OD_RAM.x1601_03 = saved->x1601_03;
+    OD_RAM.x1601_04 = saved->x1601_04;
+    OD_RAM.x1601_05 = saved->x1601_05;
+    OD_RAM.x1601_06 = saved->x1601_06;
+    OD_RAM.x1601_07 = saved->x1601_07;
+    OD_RAM.x1601_08 = saved->x1601_08;
+    OD_RAM.x1601_09 = saved->x1601_09;
+    OD_RAM.x1601_0a = saved->x1601_0a;
+    OD_RAM.x1601_0b = saved->x1601_0b;
+    OD_RAM.x1601_0c = saved->x1601_0c;
+    OD_RAM.x1601_0d = saved->x1601_0d;
+    OD_RAM.x1601_0e = saved->x1601_0e;
+    OD_RAM.x1601_0f = saved->x1601_0f;
+    OD_RAM.x1601_10 = saved->x1601_10;
+    OD_RAM.x1602_00 = saved->x1602_00;
+    OD_RAM.x1602_01 = saved->x1602_01;
+    OD_RAM.x1602_02 = saved->x1602_02;
+    OD_RAM.x1602_03 = saved->x1602_03;
+    OD_RAM.x1602_04 = saved->x1602_04;
+    OD_RAM.x1602_05 = saved->x1602_05;
+    OD_RAM.x1602_06 = saved->x1602_06;
+    OD_RAM.x1602_07 = saved->x1602_07;
+    OD_RAM.x1602_08 = saved->x1602_08;
+    OD_RAM.x1602_09 = saved->x1602_09;
+    OD_RAM.x1602_0a = saved->x1602_0a;
+    OD_RAM.x1602_0b = saved->x1602_0b;
+    OD_RAM.x1602_0c = saved->x1602_0c;
+    OD_RAM.x1602_0d = saved->x1602_0d;
+    OD_RAM.x1602_0e = saved->x1602_0e;
+    OD_RAM.x1602_0f = saved->x1602_0f;
+    OD_RAM.x1602_10 = saved->x1602_10;
+    OD_RAM.x1603_00 = saved->x1603_00;
+    OD_RAM.x1603_01 = saved->x1603_01;
+    OD_RAM.x1603_02 = saved->x1603_02;
+    OD_RAM.x1603_03 = saved->x1603_03;
+    OD_RAM.x1603_04 = saved->x1603_04;
+    OD_RAM.x1603_05 = saved->x1603_05;
+    OD_RAM.x1603_06 = saved->x1603_06;
+    OD_RAM.x1603_07 = saved->x1603_07;
+    OD_RAM.x1603_08 = saved->x1603_08;
+    OD_RAM.x1603_09 = saved->x1603_09;
+    OD_RAM.x1603_0a = saved->x1603_0a;
+    OD_RAM.x1603_0b = saved->x1603_0b;
+    OD_RAM.x1603_0c = saved->x1603_0c;
+    OD_RAM.x1603_0d = saved->x1603_0d;
+    OD_RAM.x1603_0e = saved->x1603_0e;
+    OD_RAM.x1603_0f = saved->x1603_0f;
+    OD_RAM.x1603_10 = saved->x1603_10;
+    OD_RAM.x1800_01 = saved->x1800_01;
+    OD_RAM.x1800_02 = saved->x1800_02;
+    OD_RAM.x1800_03 = saved->x1800_03;
+    OD_RAM.x1800_05 = saved->x1800_05;
+    OD_RAM.x1801_01 = saved->x1801_01;
+    OD_RAM.x1801_02 = saved->x1801_02;
+    OD_RAM.x1801_03 = saved->x1801_03;
+    OD_RAM.x1801_05 = saved->x1801_05;
+    OD_RAM.x1802_01 = saved->x1802_01;
+    OD_RAM.x1802_02 = saved->x1802_02;
+    OD_RAM.x1802_03 = saved->x1802_03;
+    OD_RAM.x1802_05 = saved->x1802_05;
+    OD_RAM.x1803_01 = saved->x1803_01;
+    OD_RAM.x1803_02 = saved->x1803_02;
+    OD_RAM.x1803_03 = saved->x1803_03;
+    OD_RAM.x1803_05 = saved->x1803_05;
+    OD_RAM.x1a00_00 = saved->x1a00_00;
+    OD_RAM.x1a00_01 = saved->x1a00_01;
+    OD_RAM.x1a00_02 = saved->x1a00_02;
+    OD_RAM.x1a00_03 = saved->x1a00_03;
+    OD_RAM.x1a00_04 = saved->x1a00_04;
+    OD_RAM.x1a00_05 = saved->x1a00_05;
+    OD_RAM.x1a00_06 = saved->x1a00_06;
+    OD_RAM.x1a00_07 = saved->x1a00_07;
+    OD_RAM.x1a00_08 = saved->x1a00_08;
+    OD_RAM.x1a00_09 = saved->x1a00_09;
+    OD_RAM.x1a00_0a = saved->x1a00_0a;
+    OD_RAM.x1a00_0b = saved->x1a00_0b;
+    OD_RAM.x1a00_0c = saved->x1a00_0c;
+    OD_RAM.x1a00_0d = saved->x1a00_0d;
+    OD_RAM.x1a00_0e = saved->x1a00_0e;
+    OD_RAM.x1a00_0f = saved->x1a00_0f;
+    OD_RAM.x1a00_10 = saved->x1a00_10;
+    OD_RAM.x1a01_00 = saved->x1a01_00;
+    OD_RAM.x1a01_01 = saved->x1a01_01;
+    OD_RAM.x1a01_02 = saved->x1a01_02;
+    OD_RAM.x1a01_03 = saved->x1a01_03;
+    OD_RAM.x1a01_04 = saved->x1a01_04;
+    OD_RAM.x1a01_05 = saved->x1a01_05;
+    OD_RAM.x1a01_06 = saved->x1a01_06;
+    OD_RAM.x1a01_07 = saved->x1a01_07;
+    OD_RAM.x1a01_08 = saved->x1a01_08;
+    OD_RAM.x1a01_09 = saved->x1a01_09;
+    OD_RAM.x1a01_0a = saved->x1a01_0a;
+    OD_RAM.x1a01_0b = saved->x1a01_0b;
+    OD_RAM.x1a01_0c = saved->x1a01_0c;
+    OD_RAM.x1a01_0d = saved->x1a01_0d;
+    OD_RAM.x1a01_0e = saved->x1a01_0e;
+    OD_RAM.x1a01_0f = saved->x1a01_0f;
+    OD_RAM.x1a01_10 = saved->x1a01_10;
+    OD_RAM.x1a02_00 = saved->x1a02_00;
+    OD_RAM.x1a02_01 = saved->x1a02_01;
+    OD_RAM.x1a02_02 = saved->x1a02_02;
+    OD_RAM.x1a02_03 = saved->x1a02_03;
+    OD_RAM.x1a02_04 = saved->x1a02_04;
+    OD_RAM.x1a02_05 = saved->x1a02_05;
+    OD_RAM.x1a02_06 = saved->x1a02_06;
+    OD_RAM.x1a02_07 = saved->x1a02_07;
+    OD_RAM.x1a02_08 = saved->x1a02_08;
+    OD_RAM.x1a02_09 = saved->x1a02_09;
+    OD_RAM.x1a02_0a = saved->x1a02_0a;
+    OD_RAM.x1a02_0b = saved->x1a02_0b;
+    OD_RAM.x1a02_0c = saved->x1a02_0c;
+    OD_RAM.x1a02_0d = saved->x1a02_0d;
+    OD_RAM.x1a02_0e = saved->x1a02_0e;
+    OD_RAM.x1a02_0f = saved->x1a02_0f;
+    OD_RAM.x1a02_10 = saved->x1a02_10;
+    OD_RAM.x1a03_00 = saved->x1a03_00;
+    OD_RAM.x1a03_01 = saved->x1a03_01;
+    OD_RAM.x1a03_02 = saved->x1a03_02;
+    OD_RAM.x1a03_03 = saved->x1a03_03;
+    OD_RAM.x1a03_04 = saved->x1a03_04;
+    OD_RAM.x1a03_05 = saved->x1a03_05;
+    OD_RAM.x1a03_06 = saved->x1a03_06;
+    OD_RAM.x1a03_07 = saved->x1a03_07;
+    OD_RAM.x1a03_08 = saved->x1a03_08;
+    OD_RAM.x1a03_09 = saved->x1a03_09;
+    OD_RAM.x1a03_0a = saved->x1a03_0a;
+    OD_RAM.x1a03_0b = saved->x1a03_0b;
+    OD_RAM.x1a03_0c = saved->x1a03_0c;
+    OD_RAM.x1a03_0d = saved->x1a03_0d;
+    OD_RAM.x1a03_0e = saved->x1a03_0e;
+    OD_RAM.x1a03_0f = saved->x1a03_0f;
+    OD_RAM.x1a03_10 = saved->x1a03_10;
+    OD_RAM.x2001_01 = saved->x2001_01;
+    OD_RAM.x2001_02 = saved->x2001_02;
+    OD_RAM.x2001_03 = saved->x2001_03;
+    OD_RAM.x6065_00 = saved->x6065_00;
+    OD_RAM.x6066_00 = saved->x6066_00;
+    OD_RAM.x6072_00 = saved->x6072_00;
+    OD_RAM.x6081_00 = saved->x6081_00;
+    OD_RAM.x6083_00 = saved->x6083_00;
+    OD_RAM.x6084_00 = saved->x6084_00;
+    OD_RAM.x6085_00 = saved->x6085_00;
+}
+void OD_restore_parameters_v1(const RollerODV1* saved) {
     OD_RAM.x1005_00 = saved->x1005_00;
     OD_RAM.x1006_00 = saved->x1006_00;
     OD_RAM.x1007_00 = saved->x1007_00;
@@ -644,6 +955,14 @@ static const OD_obj_record_t obj_1600[] = {
     {&OD_RAM.x1600_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1600_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1600_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1600_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_1601[] = {
     {&OD_RAM.x1601_00, 0, ODA_SDO_RW, 1},
@@ -655,6 +974,14 @@ static const OD_obj_record_t obj_1601[] = {
     {&OD_RAM.x1601_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1601_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1601_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1601_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_1602[] = {
     {&OD_RAM.x1602_00, 0, ODA_SDO_RW, 1},
@@ -666,6 +993,14 @@ static const OD_obj_record_t obj_1602[] = {
     {&OD_RAM.x1602_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1602_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1602_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1602_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_1603[] = {
     {&OD_RAM.x1603_00, 0, ODA_SDO_RW, 1},
@@ -677,6 +1012,14 @@ static const OD_obj_record_t obj_1603[] = {
     {&OD_RAM.x1603_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1603_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1603_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1603_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_1800[] = {
     {&OD_RAM.x1800_00, 0, ODA_SDO_R, 1},
@@ -720,6 +1063,14 @@ static const OD_obj_record_t obj_1a00[] = {
     {&OD_RAM.x1a00_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a00_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a00_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a00_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_1a01[] = {
     {&OD_RAM.x1a01_00, 0, ODA_SDO_RW, 1},
@@ -731,6 +1082,14 @@ static const OD_obj_record_t obj_1a01[] = {
     {&OD_RAM.x1a01_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a01_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a01_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a01_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_1a02[] = {
     {&OD_RAM.x1a02_00, 0, ODA_SDO_RW, 1},
@@ -742,6 +1101,14 @@ static const OD_obj_record_t obj_1a02[] = {
     {&OD_RAM.x1a02_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a02_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a02_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a02_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_1a03[] = {
     {&OD_RAM.x1a03_00, 0, ODA_SDO_RW, 1},
@@ -753,12 +1120,20 @@ static const OD_obj_record_t obj_1a03[] = {
     {&OD_RAM.x1a03_06, 6, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a03_07, 7, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x1a03_08, 8, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_09, 9, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_0a, 10, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_0b, 11, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_0c, 12, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_0d, 13, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_0e, 14, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_0f, 15, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x1a03_10, 16, ODA_SDO_RW | ODA_MB, 4},
 };
 static const OD_obj_record_t obj_2001[] = {
     {&OD_RAM.x2001_00, 0, ODA_SDO_R, 1},
     {&OD_RAM.x2001_01, 1, ODA_SDO_RW, 1},
-    {&OD_RAM.x2001_02, 2, ODA_SDO_R | ODA_MB, 4},
-    {&OD_RAM.x2001_03, 3, ODA_SDO_R | ODA_MB, 4},
+    {&OD_RAM.x2001_02, 2, ODA_SDO_RW | ODA_MB, 4},
+    {&OD_RAM.x2001_03, 3, ODA_SDO_RW | ODA_MB, 4},
     {&OD_RAM.x2001_04, 4, ODA_SDO_R, 1},
 };
 static const OD_obj_record_t obj_2003[] = {
@@ -868,18 +1243,18 @@ OD_entry_t ODList[] = {
     {0x1401, 4, ODT_REC, &obj_1401, NULL},
     {0x1402, 4, ODT_REC, &obj_1402, NULL},
     {0x1403, 4, ODT_REC, &obj_1403, NULL},
-    {0x1600, 9, ODT_REC, &obj_1600, NULL},
-    {0x1601, 9, ODT_REC, &obj_1601, NULL},
-    {0x1602, 9, ODT_REC, &obj_1602, NULL},
-    {0x1603, 9, ODT_REC, &obj_1603, NULL},
+    {0x1600, 17, ODT_REC, &obj_1600, NULL},
+    {0x1601, 17, ODT_REC, &obj_1601, NULL},
+    {0x1602, 17, ODT_REC, &obj_1602, NULL},
+    {0x1603, 17, ODT_REC, &obj_1603, NULL},
     {0x1800, 6, ODT_REC, &obj_1800, NULL},
     {0x1801, 6, ODT_REC, &obj_1801, NULL},
     {0x1802, 6, ODT_REC, &obj_1802, NULL},
     {0x1803, 6, ODT_REC, &obj_1803, NULL},
-    {0x1A00, 9, ODT_REC, &obj_1a00, NULL},
-    {0x1A01, 9, ODT_REC, &obj_1a01, NULL},
-    {0x1A02, 9, ODT_REC, &obj_1a02, NULL},
-    {0x1A03, 9, ODT_REC, &obj_1a03, NULL},
+    {0x1A00, 17, ODT_REC, &obj_1a00, NULL},
+    {0x1A01, 17, ODT_REC, &obj_1a01, NULL},
+    {0x1A02, 17, ODT_REC, &obj_1a02, NULL},
+    {0x1A03, 17, ODT_REC, &obj_1a03, NULL},
     {0x2001, 5, ODT_REC, &obj_2001, NULL},
     {0x2003, 8, ODT_REC, &obj_2003, NULL},
     {0x2004, 15, ODT_REC, &obj_2004, NULL},

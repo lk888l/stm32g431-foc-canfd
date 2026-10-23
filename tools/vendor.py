@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
+import subprocess
 import urllib.request
 import zipfile
 
@@ -14,20 +16,51 @@ ROOT = Path(__file__).resolve().parents[1]
 LOCK = ROOT / "ThirdParty/vendor-lock.json"
 
 
-def hashes(directory):
-    return {
-        p.relative_to(directory).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(directory.rglob("*"))
-        if p.is_file()
-    }
+def hashes(directory, hash_mode="bytes"):
+    if hash_mode not in {"bytes", "text-lf"}:
+        raise SystemExit("Unknown vendor hash mode: " + hash_mode)
+    result = {}
+    for path in sorted(directory.rglob("*")):
+        if path.is_file():
+            data = path.read_bytes()
+            # ST's installer and GitHub packages use different line endings.
+            # Preserve every other byte; this does not ignore content changes.
+            if hash_mode == "text-lf":
+                data = data.replace(b"\r\n", b"\n")
+            result[path.relative_to(directory).as_posix()] = hashlib.sha256(data).hexdigest()
+    return result
+
+
+def check_source_layout(root=ROOT):
+    """Reject gitlinks even when a local checkout makes their files look present."""
+    if (root / '.gitmodules').exists():
+        raise SystemExit('Submodules are prohibited; vendor dependency sources as ordinary files')
+    for base in (root / 'ThirdParty', root / 'Drivers'):
+        for entry in base.rglob('.git'):
+            raise SystemExit('Nested git checkout is prohibited: ' + str(entry))
+    # Source archives have no Git metadata and remain fully buildable offline.
+    if (root / '.git').exists() and shutil.which('git'):
+        entries = subprocess.check_output(
+            ['git', '-C', str(root), 'ls-files', '--stage', '-z'], text=True
+        )
+        gitlinks = [entry.split('\t', 1)[1] for entry in entries.split('\0')
+                    if entry.startswith('160000 ')]
+        if gitlinks:
+            raise SystemExit('Gitlinks omit dependency files on a fresh clone: ' + ', '.join(gitlinks))
 
 
 def check(lock):
+    check_source_layout()
     for package in lock["packages"]:
         directory = ROOT / package["path"]
-        if directory.is_symlink() or not directory.resolve().is_relative_to(ROOT / "ThirdParty"):
+        allowed_roots = (ROOT / "ThirdParty", ROOT / "Drivers")
+        if directory.is_symlink() or not any(
+            directory.resolve().is_relative_to(base) for base in allowed_roots
+        ):
             raise SystemExit("Unsafe vendor path: " + str(directory))
-        actual = hashes(directory)
+        if not directory.is_dir() or not package["files"]:
+            raise SystemExit("Missing or empty vendor dependency: " + str(directory))
+        actual = hashes(directory, package.get("hash_mode", "bytes"))
         if actual != package["files"]:
             changed = sorted(
                 k

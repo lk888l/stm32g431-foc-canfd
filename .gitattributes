@@ -13,5 +13,6 @@ CMakeLists.txt text eol=lf
 *.json text eol=lf
 *.cmake text eol=lf
 ThirdParty/** -text
+Drivers/** text eol=lf
 *.pdf binary
 *.png binary

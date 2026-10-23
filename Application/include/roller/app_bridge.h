@@ -4,6 +4,7 @@
 extern "C" {
 #endif
 void roller_app_start(void);
+void roller_app_encoder_trigger(void);
 void roller_panic(const char* reason);
 #ifdef __cplusplus
 }

@@ -223,7 +223,137 @@ static void lifecycle_tests() {
     b.fail_stop = false;
     CHECK(manager.stop());
 }
+// Exercise controller outputs against encoder trajectories supplied independently
+// of its profile generator. The fake rotor never follows hidden controller state.
+struct ControlFixture {
+    drive::MotorConfig config;
+    drive::Controller controller;
+    drive::Sample sample{{}, 12, 0, 25, true, true, true, true};
+    drive::Command command;
+    explicit ControlFixture(drive::Mode mode, float initial = 0, std::int8_t direction = 1)
+        : config{0, 0.05F, 0.25F, 7, direction, 1}, controller{config} {
+        sample.angle = wrap(initial * static_cast<float>(direction) * tau);
+        command.mode = mode;
+        command.operational = true;
+        command.following_window = 100;
+        for (auto cw : {6, 7, 15}) {
+            command.controlword = static_cast<std::uint16_t>(cw);
+            run(20);
+        }
+        CHECK(controller.telemetry().mode == mode);
+        CHECK(controller.telemetry().fault == drive::Fault::none);
+    }
+    void run(unsigned ticks) {
+        for (unsigned tick = 0; tick < ticks; ++tick) {
+            if (controller.telemetry().samples % 20 == 0) {
+                ++command.sequence;
+                controller.command(command);
+            }
+            (void)controller.step(sample);
+        }
+        CHECK(controller.telemetry().fault == drive::Fault::none);
+    }
+    void target(float position, bool relative = false) {
+        command.position = position;
+        command.controlword = static_cast<std::uint16_t>(0x0F | (relative ? 0x40 : 0));
+        run(20);
+        command.controlword |= 0x10;
+        run(200);
+        CHECK(controller.telemetry().statusword & 0x1000);
+    }
+    float q_voltage() const {
+        const auto angle = wrap(static_cast<float>(config.direction) * config.pole_pairs * sample.angle);
+        return park(clarke(controller.telemetry().phase_voltage), std::sin(angle), std::cos(angle)).q;
+    }
+    void move_to(float target) {
+        auto position = controller.telemetry().position;
+        while (std::abs(position - target) > 0.00005F) {
+            position = slew(position, target, 2, drive::Controller::dt);
+            sample.angle = wrap(position * static_cast<float>(config.direction) * tau);
+            run(1);
+        }
+        sample.angle = wrap(target * static_cast<float>(config.direction) * tau);
+        run(4000);
+        CHECK(std::abs(controller.telemetry().position - target) < 0.00001F);
+    }
+};
+static void position_mode_tests() {
+    using namespace drive;
+    CHECK(Mode::position == Mode::multi_turn_position);
+    Command valid;
+    valid.mode = Mode::single_turn_position;
+    CHECK(Controller::valid_command(valid));
+    valid.mode = static_cast<Mode>(-2);
+    CHECK(!Controller::valid_command(valid));
+    // Crossing zero clockwise takes +0.2 turns in single-turn mode. The legacy
+    // mode 1 must still take -0.8 turns to the exact continuous coordinate.
+    {
+        ControlFixture single{Mode::single_turn_position, 0.9F};
+        single.target(0.1F);
+        CHECK(single.q_voltage() > 0);
+        single.move_to(1.1F);
+        CHECK(single.controller.telemetry().statusword & 0x0400);
+        single.command.controlword &= static_cast<std::uint16_t>(~0x10);
+        single.run(20);
+        CHECK(!(single.controller.telemetry().statusword & 0x1000));
+    }
+    {
+        ControlFixture multiple{Mode::multi_turn_position, 0.9F};
+        multiple.target(0.1F);
+        CHECK(multiple.q_voltage() < 0);
+        multiple.move_to(0.1F);
+        CHECK(multiple.controller.telemetry().statusword & 0x0400);
+    }
+    // Counterclockwise wrap, negative targets and the half-turn tie rule.
+    {
+        ControlFixture single{Mode::single_turn_position, 0.1F};
+        single.target(-0.1F);
+        CHECK(single.q_voltage() < 0);
+        single.move_to(-0.1F);
+        CHECK(single.controller.telemetry().statusword & 0x0400);
+    }
+    {
+        ControlFixture half{Mode::single_turn_position};
+        half.target(0.5F);
+        CHECK(half.q_voltage() < 0);
+        half.move_to(-0.5F);
+        CHECK(half.controller.telemetry().statusword & 0x0400);
+    }
+    // Relative requests retain all requested turns only in mode 1.
+    for (auto mode : {Mode::single_turn_position, Mode::multi_turn_position}) {
+        ControlFixture fixture{mode, 0.9F};
+        fixture.target(1.3F, true);
+        CHECK(fixture.q_voltage() > 0);
+        fixture.move_to(mode == Mode::single_turn_position ? 1.2F : 2.2F);
+        CHECK(fixture.controller.telemetry().statusword & 0x0400);
+    }
+    // A reversed encoder uses the same user-facing position convention.
+    {
+        ControlFixture reversed{Mode::single_turn_position, -0.9F, -1};
+        reversed.target(-0.1F);
+        CHECK(reversed.q_voltage() < 0);
+        reversed.move_to(-1.1F);
+        CHECK(reversed.controller.telemetry().statusword & 0x0400);
+    }
+    // Switching from torque to position clears the current integrators, holds
+    // the measured coordinate and waits for a fresh set-point edge.
+    {
+        ControlFixture fixture{Mode::torque, 0.25F};
+        fixture.command.torque = 1000;
+        fixture.run(400);
+        CHECK(fixture.q_voltage() > 0.1F);
+        fixture.command.mode = Mode::single_turn_position;
+        fixture.command.position = 0.9F;
+        fixture.run(20);
+        CHECK(std::abs(fixture.q_voltage()) < 0.00001F);
+        CHECK(fixture.controller.telemetry().statusword & 0x0400);
+        CHECK(!(fixture.controller.telemetry().statusword & 0x1000));
+        fixture.target(0.9F);
+        CHECK(fixture.q_voltage() < 0);
+    }
+}
 static void controller_tests() {
+    position_mode_tests();
     using namespace drive;
     Controller controller;
     Sample sample{{0, 0, 0}, 12, 0, 25, true, true, true, true};
@@ -309,6 +439,8 @@ struct FakeBus {
     std::vector<RollerCanFrame> sent;
     bool blocked{};
     std::uint16_t errors{};
+    std::uint32_t nominal{}, data_bitrate{}, configure_calls{};
+    bool brs{}, reject_configuration{};
     RollerCanTransport transport() {
         return {this,
                 [](void*) { return true; },
@@ -322,7 +454,15 @@ struct FakeBus {
                     return true;
                 },
                 [](void* p) { return static_cast<FakeBus*>(p)->errors; },
-                [](void*) {}};
+                [](void*) {},
+                [](void* p, std::uint32_t nominal, std::uint32_t data, bool brs) {
+                    auto& self = *static_cast<FakeBus*>(p);
+                    self.nominal = nominal;
+                    self.data_bitrate = data;
+                    self.brs = brs;
+                    ++self.configure_calls;
+                    return !self.reject_configuration;
+                }};
     }
 };
 static void protocol_tests() {
@@ -524,6 +664,48 @@ static void current_loop_tests() {
         CHECK(std::abs(beta - 0.25F * static_cast<float>(target) / 1000) < 0.003F);
         CHECK(std::abs(alpha) < 0.001F);
     }
+    // MIT uses torque feedforward plus position and velocity impedance terms.
+    // Check their physical current result with the same independent RL plant,
+    // including saturation, halt and resumption, rather than duplicating the PI.
+    command.mode = Mode::mit;
+    struct MitTrial {
+        float position, velocity, torque, kp, kd, expected_torque;
+        std::uint16_t max_torque, controlword;
+    };
+    for (const auto trial : std::array{
+             MitTrial{0, 0, 0.001F, 0, 0, 0.001F, 1000, 15},
+             MitTrial{0.2F, 0, 0, 0.01F, 0, 0.002F, 1000, 15},
+             MitTrial{0, -0.5F, 0, 0, 0.002F, -0.001F, 1000, 15},
+             MitTrial{0.2F, 0.5F, 0.001F, 0.01F, 0.002F, 0.004F, 1000, 15},
+             MitTrial{-0.2F, -0.5F, -0.001F, 0.01F, 0.002F, -0.004F, 1000, 15},
+             MitTrial{0, 0, 1, 0, 0, 1, 300, 15},
+             MitTrial{0, 0, 1, 0, 0, 0, 300, 0x10F},
+             MitTrial{0, 0, -1, 0, 0, -1, 300, 15}}) {
+        command.mit_position = trial.position;
+        command.mit_velocity = trial.velocity;
+        command.mit_torque = trial.torque;
+        command.mit_kp = trial.kp;
+        command.mit_kd = trial.kd;
+        command.max_torque = trial.max_torque;
+        command.controlword = trial.controlword;
+        for (int i = 0; i < 5000; ++i) {
+            if (i % 20 == 0) {
+                ++command.sequence;
+                controller.command(command);
+            }
+            sample.current = {alpha, -0.5F * alpha + sqrt3 * 0.5F * beta,
+                              -0.5F * alpha - sqrt3 * 0.5F * beta};
+            const auto output = controller.step(sample);
+            CHECK(output.enable);
+            const auto v = clarke({output.duty.a * 12, output.duty.b * 12, output.duty.c * 12});
+            alpha += (v.alpha - 2 * alpha) * Controller::dt / 0.001F;
+            beta += (v.beta - 2 * beta) * Controller::dt / 0.001F;
+        }
+        const auto limit = config.current_limit * static_cast<float>(trial.max_torque) / 1000;
+        const auto expected = std::clamp(trial.expected_torque / config.torque_constant, -limit, limit);
+        CHECK(std::abs(beta - expected) < 0.003F);
+        CHECK(std::abs(alpha) < 0.001F);
+    }
     sample.angle = 2;
     CHECK(!controller.step(sample).enable);
     CHECK(controller.telemetry().fault == Fault::encoder);
@@ -609,9 +791,14 @@ struct ProtocolFixture {
     MemoryStore storage;
     protocol::Node node{transport, channels, storage};
     drive::Telemetry telemetry{};
-    ProtocolFixture() {
+    std::uint8_t node_id{1};
+    explicit ProtocolFixture(std::span<const std::byte> saved = {}) {
         telemetry.statusword = 0x240;
-        (void)node.load_settings();
+        if (!saved.empty()) {
+            CHECK(storage.write(saved));
+        }
+        telemetry.config = node.load_settings();
+        node_id = OD_RAM.x2001_01;
         CHECK(node.start());
         (void)process();
     }
@@ -627,7 +814,7 @@ struct ProtocolFixture {
     }
     RollerCanFrame sdo(std::uint16_t index, std::uint8_t sub, std::uint8_t cs, std::uint32_t value = 0) {
         RollerCanFrame frame{
-            0x601,
+            static_cast<std::uint16_t>(0x600 + node_id),
             8,
             {cs, static_cast<std::uint8_t>(index), static_cast<std::uint8_t>(index >> 8), sub, 0, 0, 0, 0},
             false};
@@ -636,7 +823,7 @@ struct ProtocolFixture {
         node.receive(frame);
         (void)process();
         for (const auto& out : bus.sent) {
-            if (out.ident == 0x581) {
+            if (out.ident == 0x580 + node_id) {
                 return out;
             }
         }
@@ -644,11 +831,78 @@ struct ProtocolFixture {
         return {};
     }
     void nmt(std::uint8_t state) {
-        node.receive({0, 2, {state, 1}, false});
+        node.receive({0, 2, {state, node_id}, false});
         (void)process();
     }
 };
 static void protocol_boundary_tests() {
+    {
+        ProtocolFixture f;
+        CHECK(f.sdo(0x1403, 1, 0x23, 0x501).data[0] == 0x60);
+        CHECK(f.sdo(0x2004, 1, 0x2F, 1).data[0] == 0x60);
+        CHECK(f.sdo(0x6060, 0, 0x2F, 5).data[0] == 0x60);
+        f.telemetry.statusword = 0x208;
+        f.telemetry.fault = drive::Fault::communication;
+        (void)f.process();
+        CHECK(f.sdo(0x6040, 0, 0x2B, 0x80).data[0] == 0x60);
+        const auto reset = f.process();
+        CHECK(!reset.operational && reset.network_ok);
+        CHECK(reset.controlword == 0x80); // fault reset does not need a motion packet
+        CHECK(f.sdo(0x6040, 0, 0x2B, 0).data[0] == 0x60);
+        CHECK(f.process().controlword == 0); // allow a later reset rising edge
+        CHECK(f.sdo(0x6040, 0, 0x2B, 0x8F).data[0] == 0x60);
+        CHECK(f.process().controlword == 0x80); // still remove all enable bits
+    }
+    {
+        ProtocolFixture f;
+        // The manufacturer single-turn mode is a signed int8, including in PDO.
+        CHECK(f.sdo(0x6060, 0, 0x2F, 0xFF).data[0] == 0x60);
+        CHECK(f.process().mode == drive::Mode::single_turn_position);
+        CHECK(f.sdo(0x6060, 0, 0x40).data[4] == 0xFF);
+        CHECK(f.sdo(0x607A, 0, 0x23, std::bit_cast<std::uint32_t>(0.95F)).data[0] == 0x60);
+        CHECK(f.process().position == 0.95F);
+        CHECK(f.sdo(0x1401, 1, 0x23, 0x301).data[0] == 0x60);
+        f.nmt(1);
+        RollerCanFrame pdo{0x301, 7, {}, false};
+        const auto target = -1.25F;
+        std::memcpy(pdo.data, &target, 4);
+        pdo.data[4] = 0x1F;
+        pdo.data[6] = 0xFF;
+        f.node.receive(pdo);
+        const auto command = f.process();
+        CHECK(command.mode == drive::Mode::single_turn_position);
+        CHECK(command.position == target);
+        CHECK(command.controlword == 0x1F);
+        f.telemetry.statusword = 0x237;
+        f.telemetry.mode = drive::Mode::single_turn_position;
+        (void)f.process();
+        CHECK(f.sdo(0x6061, 0, 0x40).data[4] == 0xFF);
+        CHECK(f.sdo(0x6060, 0, 0x2F, 1).data[0] == 0x80);
+        CHECK(f.sdo(0x6060, 0, 0x2F, 0xFF).data[0] == 0x60);
+        f.telemetry.statusword = 0x240;
+        CHECK(f.sdo(0x6060, 0, 0x2F, 1).data[0] == 0x60);
+        CHECK(f.process().mode == drive::Mode::multi_turn_position);
+        CHECK(f.sdo(0x607A, 0, 0x23, std::bit_cast<std::uint32_t>(12.5F)).data[0] == 0x60);
+        CHECK(f.process().position == 12.5F);
+        CHECK(f.sdo(0x6060, 0, 0x2F, 0xFE).data[0] == 0x80);
+    }
+    {
+        ProtocolFixture f;
+        CHECK(f.sdo(0x6060, 0, 0x2F, 5).data[0] == 0x60);
+        CHECK(f.sdo(0x2003, 1, 0x23, std::bit_cast<std::uint32_t>(2.25F)).data[0] == 0x60);
+        CHECK(f.sdo(0x2003, 2, 0x23, std::bit_cast<std::uint32_t>(-0.5F)).data[0] == 0x60);
+        CHECK(f.sdo(0x2003, 3, 0x23, std::bit_cast<std::uint32_t>(0.004F)).data[0] == 0x60);
+        CHECK(f.sdo(0x2003, 4, 0x2B, 200).data[0] == 0x60);
+        CHECK(f.sdo(0x2003, 5, 0x2B, 10).data[0] == 0x60);
+        CHECK(f.sdo(0x2003, 6, 0x2B, 300).data[0] == 0x60);
+        const auto command = f.process();
+        CHECK(command.mode == drive::Mode::mit);
+        CHECK(command.mit_position == 2.25F && command.mit_velocity == -0.5F);
+        CHECK(command.mit_torque == 0.004F);
+        CHECK(std::abs(command.mit_kp - 0.2F) < 1e-6F);
+        CHECK(std::abs(command.mit_kd - 0.01F) < 1e-6F);
+        CHECK(command.max_torque == 300);
+    }
     {
         ProtocolFixture f;
         CHECK(f.sdo(0x2100, 1, 0x23, 0x696C6163).data[0] == 0x80);
@@ -730,9 +984,179 @@ static void protocol_boundary_tests() {
         CHECK(command.mit_kp == 100);
         CHECK(command.mit_kd == 20);
         CHECK(std::abs(command.mit_torque - 0.05F) < 1e-6F);
+        f.telemetry.statusword = 0x237;
+        CHECK(f.sdo(0x6040, 0, 0x2B, 0x0F).data[0] == 0x60);
+        CHECK(f.sdo(0x2004, 14, 0x2B, 500).data[0] == 0x60);
+        const auto limited = f.process();
+        CHECK(limited.max_torque == 500);
+        CHECK(limited.controlword == 0x0F && limited.network_ok);
+        for (unsigned i = 0; i < 101; ++i) {
+            CHECK(f.sdo(0x2004, 14, 0x2B, 300).data[0] == 0x60);
+        }
+        const auto expired = f.process();
+        CHECK(expired.max_torque == 300 && expired.controlword == 0x0F);
+        CHECK(!expired.network_ok); // dynamic limit writes cannot renew a motion packet
+        f.node.receive({0x501, 8, {}, false});
+        CHECK(f.process().network_ok);
+        for (unsigned i = 0; i < 55; ++i) {
+            // Unused ordinary MIT targets and controlwords cannot renew a packet.
+            CHECK(f.sdo(0x2003, 3, 0x23, 0).data[0] == 0x60);
+            CHECK(f.sdo(0x6040, 0, 0x2B, 6).data[0] == 0x60);
+        }
+        CHECK(!f.process().network_ok);
+        f.node.receive({0x501, 8, {}, false});
+        CHECK(f.process().network_ok);
+        f.telemetry.statusword = 0x240;
+        f.nmt(128);
+        f.nmt(1);
+        CHECK(f.process().controlword == 0); // a stopped session cannot reuse a packet
+        f.node.receive({0x501, 8, {}, false});
+        CHECK(f.process().controlword == 6);
+        CHECK(f.sdo(0x2004, 5, 0x23, std::bit_cast<std::uint32_t>(0.6F)).data[0] == 0x60);
+        CHECK(f.process().controlword == 0); // changed quantization requires a fresh packet
+        f.node.receive({0x501, 8, {}, false});
+        CHECK(f.process().controlword == 6);
+        CHECK(f.sdo(0x6060, 0, 0x2F, 3).data[0] == 0x60);
+        CHECK(f.sdo(0x6060, 0, 0x2F, 5).data[0] == 0x60);
+        CHECK(f.process().controlword == 0);
+    }
+}
+static void communication_settings_tests() {
+    {
+        ProtocolFixture f;
+        CHECK(f.bus.nominal == 1000000 && f.bus.data_bitrate == 5000000 && f.bus.brs);
+        CHECK(f.bus.configure_calls == 1);
+        for (const auto rate : {125000U, 250000U, 500000U, 1000000U}) {
+            CHECK(f.sdo(0x2001, 2, 0x23, rate).data[0] == 0x60);
+        }
+        for (const auto rate : {1000000U, 2000000U, 4000000U, 5000000U, 8000000U}) {
+            CHECK(f.sdo(0x2001, 3, 0x23, rate).data[0] == 0x60);
+        }
+        CHECK(f.sdo(0x2001, 2, 0x23, 250000).data[0] == 0x60);
+        CHECK(f.sdo(0x2001, 2, 0x23, 333333).data[0] == 0x80);
+        CHECK(f.sdo(0x2001, 3, 0x23, 6000000).data[0] == 0x80);
+        CHECK(f.sdo(0x2001, 4, 0x2F, 0).data[0] == 0x80);
+        CHECK(OD_RAM.x2001_02 == 250000 && OD_RAM.x2001_03 == 8000000 && OD_RAM.x2001_04 == 1);
+        CHECK(f.bus.configure_calls == 1 && f.bus.nominal == 1000000 && f.bus.data_bitrate == 5000000);
+        CHECK(f.sdo(0x6040, 0, 0x2B, 6).data[0] == 0x60);
+        CHECK(f.sdo(0x2001, 2, 0x23, 500000).data[0] == 0x80);
+        CHECK(f.sdo(0x6040, 0, 0x2B, 0).data[0] == 0x60);
+        f.telemetry.calibration = drive::Calibration::align;
+        CHECK(f.sdo(0x2001, 2, 0x23, 500000).data[0] == 0x80);
+        f.telemetry.calibration = drive::Calibration::required;
+        f.telemetry.statusword = 0x237;
+        CHECK(f.sdo(0x2001, 2, 0x23, 500000).data[0] == 0x80);
+        f.telemetry.statusword = 0x240;
+        f.nmt(1);
+        CHECK(f.sdo(0x2001, 2, 0x23, 500000).data[0] == 0x80);
+        CHECK(f.bus.configure_calls == 1);
+        f.nmt(128);
+        CHECK(f.sdo(0x1010, 1, 0x23, 0x65766173).data[0] == 0x60);
+        CHECK(f.bus.configure_calls == 1); // saving never changes the live transport
+        CHECK(f.sdo(0x2001, 2, 0x23, 125000).data[0] == 0x60); // intentionally not saved
+        f.nmt(130);
+        CHECK(f.node.reset_requested());
+        CHECK(f.node.stop());
+        protocol::Node rebooted{f.transport, f.channels, f.storage};
+        (void)rebooted.load_settings();
+        CHECK(OD_RAM.x2001_02 == 250000 && OD_RAM.x2001_03 == 8000000);
+        CHECK(rebooted.start());
+        CHECK(f.bus.configure_calls == 2 && f.bus.nominal == 250000 && f.bus.data_bitrate == 8000000);
+        CHECK(rebooted.stop());
+    }
+    {
+        FakeBus bus;
+        auto transport = bus.transport();
+        Channels channels;
+        MemoryStore storage;
+        protocol::Node node{transport, channels, storage};
+        (void)node.load_settings();
+        bus.reject_configuration = true;
+        CHECK(!node.start());
+        CHECK(node.stop());
+    }
+}
+static void legacy_settings_tests() {
+    protocol::SavedSettingsV1 legacy;
+    legacy.motor = {1.25F, 0.05F, 0.2F, 11, -1, 1};
+    legacy.dictionary.x2001_01 = 7;
+    legacy.dictionary.x2001_02 = 125000; // ignored: v1 speed/BRS fields were read-only
+    legacy.dictionary.x2001_03 = 1000000;
+    legacy.dictionary.x2001_04 = 0;
+    legacy.dictionary.x1005_00 = 0x80;
+    legacy.dictionary.x1017_00 = 321;
+    legacy.dictionary.x1400_01 = 0x222;
+    legacy.dictionary.x1400_02 = 255;
+    legacy.dictionary.x1600_00 = 2;
+    legacy.dictionary.x1600_01 = 0x60FF0020;
+    legacy.dictionary.x1600_02 = 0x60400010;
+    legacy.dictionary.x1600_08 = 0x607A0020;
+    legacy.dictionary.x1a03_08 = 0x60640020;
+    legacy.dictionary.x6065_00 = 0.5F;
+    legacy.dictionary.x6066_00 = 700;
+    legacy.dictionary.x6072_00 = 800;
+    legacy.dictionary.x6081_00 = 3;
+    legacy.dictionary.x6083_00 = 4;
+    legacy.dictionary.x6084_00 = 5;
+    legacy.dictionary.x6085_00 = 6;
+    legacy.dictionary.x6040_00 = 15;
+    legacy.dictionary.x6060_00 = 3;
+    legacy.dictionary.x60ff_00 = 4;
+    const auto bytes = std::as_bytes(std::span{&legacy, 1});
+    {
+        ProtocolFixture f{bytes};
+        CHECK(f.storage.data.size() == bytes.size());
+        CHECK(std::equal(f.storage.data.begin(), f.storage.data.end(), bytes.begin()));
+        CHECK(f.telemetry.config.electrical_offset == 1.25F && f.telemetry.config.torque_constant == 0.05F);
+        CHECK(f.telemetry.config.pole_pairs == 11 && f.telemetry.config.direction == -1);
+        CHECK(f.telemetry.config.current_limit == 0.2F && f.telemetry.config.calibrated == 1);
+        CHECK(OD_RAM.x2001_01 == 7 && OD_RAM.x1017_00 == 321);
+        CHECK(f.bus.nominal == 1000000 && f.bus.data_bitrate == 5000000 && f.bus.brs);
+        CHECK(OD_RAM.x1400_01 == 0x222 && OD_RAM.x1600_00 == 2 && OD_RAM.x1600_08 == 0x607A0020);
+        CHECK(OD_RAM.x1a03_08 == 0x60640020 && OD_RAM.x1600_09 == 0 && OD_RAM.x1a03_10 == 0);
+        CHECK(OD_RAM.x6081_00 == 3 && OD_RAM.x6083_00 == 4 && OD_RAM.x6084_00 == 5 && OD_RAM.x6085_00 == 6);
+        CHECK(OD_RAM.x6040_00 == 0 && OD_RAM.x6060_00 == 0 && OD_RAM.x60ff_00 == 0);
+        CHECK(f.sdo(0x1010, 1, 0x23, 0x65766173).data[0] == 0x60);
+        protocol::SavedSettings saved;
+        CHECK(f.storage.read(std::as_writable_bytes(std::span{&saved, 1})));
+        CHECK(saved.version == 2 && saved.motor.calibrated == 1 && saved.motor.electrical_offset == 1.25F);
+        CHECK(saved.dictionary.x2001_02 == 1000000 && saved.dictionary.x2001_03 == 5000000);
+        CHECK(f.node.stop());
+        protocol::Node rebooted{f.transport, f.channels, f.storage};
+        const auto motor = rebooted.load_settings();
+        CHECK(motor.calibrated == 1 && motor.direction == -1 && motor.pole_pairs == 11);
+        CHECK(OD_RAM.x1600_08 == 0x607A0020 && OD_RAM.x2001_01 == 7);
+    }
+    // A v2 commit has a different payload length. At every flash operation,
+    // interruption must preserve the only v1 record until v2 is committed.
+    RamPages initial;
+    ParameterJournal journal{initial};
+    CHECK(journal.write(bytes));
+    protocol::SavedSettings newer;
+    newer.motor = legacy.motor;
+    newer.dictionary = OD_RAM;
+    newer.dictionary.x2001_03 = 8000000;
+    const auto new_bytes = std::as_bytes(std::span{&newer, 1});
+    const auto operation_count = 4 + (new_bytes.size() + 7) / 8;
+    for (std::size_t cut = 0; cut <= operation_count; ++cut) {
+        auto pages = initial;
+        pages.budget = static_cast<int>(cut);
+        ParameterJournal upgrading{pages};
+        const auto completed = upgrading.write(new_bytes);
+        ParameterJournal boot{pages};
+        protocol::SavedSettings restored;
+        CHECK(boot.read(std::as_writable_bytes(std::span{&restored, 1})) == completed);
+        if (completed) {
+            CHECK(restored.version == 2 && restored.dictionary.x2001_03 == 8000000);
+        }
+        protocol::SavedSettingsV1 previous;
+        CHECK(boot.read(std::as_writable_bytes(std::span{&previous, 1})));
+        CHECK(std::memcmp(&previous, &legacy, sizeof(legacy)) == 0);
     }
 }
 static void saved_settings_tests() {
+    communication_settings_tests();
+    legacy_settings_tests();
     ProtocolFixture f;
     f.telemetry.config.calibrated = 1;
     f.telemetry.config.pole_pairs = 11;

@@ -8,10 +8,17 @@
 
 namespace roller::protocol {
 struct SavedSettings {
-    std::uint32_t version{1};
+    std::uint32_t version{2};
     drive::MotorConfig motor{};
     RollerOD dictionary{};
 };
+struct SavedSettingsV1 {
+    std::uint32_t version{1};
+    drive::MotorConfig motor{};
+    RollerODV1 dictionary{};
+};
+static_assert(sizeof(RollerODV1) == 768 && sizeof(SavedSettingsV1) == 788);
+static_assert(sizeof(SavedSettings) <= 2000);
 class Node final : public Module {
   public:
     Node(RollerCanTransport& transport, Channels& channels, ParameterStore& store) noexcept

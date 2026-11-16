@@ -2,7 +2,7 @@
 """Attended motor tests through a running OpenOCD and matching Bench ELF.
 
 The MCU processes real CANopen frames, but this transport bypasses physical CAN.
-Inspection never enables power. Motion commands retain firmware fault/lease checks.
+Inspection never enables power. Motion commands require explicit enable; communication expiry is diagnostic.
 """
 import argparse
 import json
@@ -211,14 +211,17 @@ class Bench:
         try:
             self.nmt(2)  # Also aborts calibration; SDO is unavailable in Stopped.
             deadline = time.monotonic() + 0.2
-            while self.snapshot()["outputs"] & 4:
+            while self.snapshot()["outputs"] & (1 << 10):
                 if time.monotonic() > deadline:
                     raise TimeoutError("Power did not turn off")
             self.nmt(128)
             self.sdo(0x6040, value=0, size=2)
         except BaseException:
-            # Last resort: gate and nSLEEP off. A reset is needed to wake again.
-            self.write(0x48000418, [0x00060000])
+            # Explicit stop fallback: halt first so the control ISR cannot wake
+            # the driver again after a raw nSLEEP write. Resume requires operator action.
+            self.command("halt")
+            self.write(0x48000418, [0x04000000])
+            self.write(0x40012C20, [self.read(0x40012C20, 1)[0] & ~0x111])
             raise
 
     def reset_fault(self):

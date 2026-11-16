@@ -8,7 +8,7 @@
 
 namespace roller::protocol {
 struct SavedSettings {
-    std::uint32_t version{2};
+    std::uint32_t version{3};
     drive::MotorConfig motor{};
     RollerOD dictionary{};
 };
@@ -53,6 +53,7 @@ class Node final : public Module {
     ParameterStore& store_;
     CO_t* co_{};
     std::array<OD_extension_t, 32> extensions_{};
+    RollerOD rpdo_snapshot_{};
     drive::Command command_{};
     drive::Telemetry telemetry_{};
     drive::Fault reported_fault_{};

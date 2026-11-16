@@ -76,8 +76,11 @@ inline Abc svpwm(AlphaBeta v, float bus) noexcept {
                     -0.5F * v.alpha - 0.5F * sqrt3 * v.beta};
     const auto common =
         -0.5F * (std::max({phase.a, phase.b, phase.c}) + std::min({phase.a, phase.b, phase.c}));
-    // 10% zero-vector margin guarantees a low-side sampling window at ARR.
-    const auto duty = [=](float x) { return std::clamp(0.5F + (x + common) / bus, 0.10F, 0.90F); };
+    // Full linear SVPWM: |Vdq| <= Vbus/sqrt(3), no artificial zero-vector margin.
+    // Scale the whole vector if a caller requests outside the hexagon.
+    const float span = std::max({phase.a, phase.b, phase.c}) - std::min({phase.a, phase.b, phase.c});
+    const float scale = span > bus ? bus / span : 1.0F;
+    const auto duty = [=](float x) { return std::clamp(0.5F + (x + common) * scale / bus, 0.0F, 1.0F); };
     return {duty(phase.a), duty(phase.b), duty(phase.c)};
 }
 class Pi {
@@ -110,6 +113,17 @@ class Pi {
 inline float slew(float value, float target, float rate, float dt) noexcept {
     return value + std::clamp(target - value, -rate * dt, rate * dt);
 }
+inline float velocity_ramp(float value, float target, float acceleration, float deceleration,
+                           float dt) noexcept {
+    if (value * target < 0) {
+        const float stop_time = std::abs(value) / deceleration;
+        if (stop_time >= dt) {
+            return slew(value, 0, deceleration, dt);
+        }
+        return slew(0, target, acceleration, dt - stop_time);
+    }
+    return slew(value, target, std::abs(target) < std::abs(value) ? deceleration : acceleration, dt);
+}
 class AngleTracker {
   public:
     void resynchronize(float angle) noexcept {
@@ -137,7 +151,7 @@ class AngleTracker {
         const auto raw = angle - previous_;
         const auto delta = raw > pi ? raw - tau : (raw < -pi ? raw + tau : raw);
         // Physical limit 100 rev/s plus 3 encoder LSBs; reject a corrupt jump.
-        if (std::abs(delta) > 100.0F * tau * dt + 3.0F * tau / 32768.0F) {
+        if (std::abs(delta) > 100.0F * tau * dt + 3.0F * tau / 16384.0F) {
             return false;
         }
         if (!advance_turn(raw)) {

@@ -6,8 +6,9 @@
 #include "roller/core/spsc_queue.hpp"
 #include "roller/drive/controller.hpp"
 #include "roller/drive/state_machine.hpp"
+#include "roller/drivers/current_window.hpp"
+#include "roller/drivers/mt6701.hpp"
 #include "roller/drivers/rollercan_sensing.hpp"
-#include "roller/drivers/tli5012.hpp"
 #include <bit>
 #include <cmath>
 #include <cstdio>
@@ -30,7 +31,7 @@ using namespace roller;
 using namespace roller::control;
 
 static void math_tests() {
-    CHECK(std::abs(drivers::bus_voltage(2238, 3.304F) - 11.655F) < 0.015F);
+    CHECK(std::abs(drivers::bus_voltage(2238, 3.304F) - 19.864F) < 0.015F);
     for (int i = -40000; i <= 40000; ++i) {
         const auto input = static_cast<float>(i) * 0.01F;
         auto expected = std::fmod(input, tau);
@@ -129,30 +130,26 @@ static void state_tests() {
     CHECK(sm.step(0x80, true, true, false) == State::disabled);
 }
 static void encoder_tests() {
-    // CRC-8/SAE-J1850 published check vector; encoder uses the same polynomial/init/xor.
-    const std::uint8_t check[]{'1', '2', '3', '4', '5', '6', '7', '8', '9'};
-    CHECK(drivers::crc8(check) == 0x4B);
-    for (unsigned value = 0; value < 65536; ++value) {
-        const std::uint8_t frame[]{0x80, 0x21, static_cast<std::uint8_t>(value >> 8),
-                                   static_cast<std::uint8_t>(value)};
-        std::uint8_t crc = 0xFF;
-        for (auto byte : frame) {
-            crc ^= byte;
-            for (int bit = 0; bit < 8; ++bit) {
-                crc = static_cast<std::uint8_t>((crc & 0x80) ? (crc << 1) ^ 0x1D : crc << 1);
+    // Long division is an independent reference for every 18-bit payload.
+    for (std::uint32_t payload = 0; payload < (1U << 18); ++payload) {
+        auto polynomial = payload << 6;
+        for (int bit = 23; bit >= 6; --bit) {
+            if (polynomial & (1U << bit)) {
+                polynomial ^= 0x43U << (bit - 6);
             }
         }
-        CHECK(drivers::crc8(frame) == static_cast<std::uint8_t>(~crc));
+        CHECK(drivers::mt6701_crc(payload) == (polynomial & 63U));
+        const auto frame = (payload << 6) | (polynomial & 63U);
+        const auto reading = drivers::decode_mt6701(frame);
+        CHECK(reading.has_value());
+        CHECK(reading->counts == payload >> 4);
+        CHECK(reading->status == (payload & 15U));
+        for (unsigned bit = 0; bit < 24; ++bit) {
+            CHECK(!drivers::decode_mt6701(frame ^ (1U << bit)));
+        }
     }
-    const std::uint8_t payload[]{0x80, 0x21, 0x20, 0x00};
-    const auto safety = static_cast<std::uint16_t>(0xFE00 | drivers::crc8(payload));
-    auto angle = drivers::decode_angle(0x2000, safety);
-    CHECK(angle.has_value());
-    CHECK(std::abs(*angle - pi / 2) < 1e-5F);
-    CHECK(!drivers::decode_angle(0x2001, safety));
-    CHECK(!drivers::decode_angle(0x2000, safety & ~0x4000));
-    CHECK(!drivers::decode_angle(0xFFFF, 0xFFFF));
-    CHECK(!drivers::decode_angle(0, 0));
+    CHECK(drivers::decode_mt6701(0).has_value()); // zero degrees is valid
+    CHECK(!drivers::decode_mt6701(0xFFFFFF));
 }
 static void queue_tests() {
     SpscQueue<std::uint32_t, 64> queue;
@@ -378,11 +375,11 @@ static void controller_tests() {
         }
     }
     CHECK(ready.step(sample).enable);
-    sample.current.a = 0.9F;
-    CHECK(!ready.step(sample).enable);
-    CHECK(ready.telemetry().fault == Fault::overcurrent);
+    sample.current.a = 5.0F;
+    CHECK(ready.step(sample).enable);
+    CHECK(ready.telemetry().warnings & current_warning);
     sample.current.a = 0;
-    CHECK(!ready.step(sample).enable);
+    CHECK(ready.step(sample).enable);
     command.controlword = 0x80;
     ++command.sequence;
     ready.command(command);
@@ -401,11 +398,11 @@ static void controller_tests() {
             (void)ready.step(sample);
         }
     }
-    sample.bus_voltage = 17;
-    CHECK(!ready.step(sample).enable);
-    CHECK(ready.telemetry().fault == Fault::overvoltage);
+    sample.bus_voltage = 36;
+    CHECK(ready.step(sample).enable);
+    CHECK(ready.telemetry().warnings & voltage_warning);
     CHECK(!Controller::valid_command(Command{.position = std::numeric_limits<float>::quiet_NaN()}));
-    CHECK(!Controller::valid_config(MotorConfig{.current_limit = 1}));
+    CHECK(!Controller::valid_config(MotorConfig{.current_limit = 5}));
     Controller stale{cfg};
     sample.bus_voltage = 12;
     for (auto cw : {6, 7, 15}) {
@@ -419,7 +416,9 @@ static void controller_tests() {
     for (int i = 0; i < 2001; ++i) {
         (void)stale.step(sample);
     }
-    CHECK(stale.telemetry().fault == Fault::communication);
+    CHECK(stale.telemetry().fault == Fault::none);
+    CHECK(stale.telemetry().warnings & communication_warning);
+    CHECK(stale.step(sample).enable);
 }
 struct MemoryStore : ParameterStore {
     std::vector<std::byte> data;
@@ -661,7 +660,7 @@ static void current_loop_tests() {
             alpha += (v.alpha - 2 * alpha) * Controller::dt / 0.001F;
             beta += (v.beta - 2 * beta) * Controller::dt / 0.001F;
         }
-        CHECK(std::abs(beta - 0.25F * static_cast<float>(target) / 1000) < 0.003F);
+        CHECK(std::abs(beta - config.current_limit * static_cast<float>(target) / 1000) < 0.003F);
         CHECK(std::abs(alpha) < 0.001F);
     }
     // MIT uses torque feedforward plus position and velocity impedance terms.
@@ -673,13 +672,11 @@ static void current_loop_tests() {
         std::uint16_t max_torque, controlword;
     };
     for (const auto trial : std::array{
-             MitTrial{0, 0, 0.001F, 0, 0, 0.001F, 1000, 15},
-             MitTrial{0.2F, 0, 0, 0.01F, 0, 0.002F, 1000, 15},
+             MitTrial{0, 0, 0.001F, 0, 0, 0.001F, 1000, 15}, MitTrial{0.2F, 0, 0, 0.01F, 0, 0.002F, 1000, 15},
              MitTrial{0, -0.5F, 0, 0, 0.002F, -0.001F, 1000, 15},
              MitTrial{0.2F, 0.5F, 0.001F, 0.01F, 0.002F, 0.004F, 1000, 15},
              MitTrial{-0.2F, -0.5F, -0.001F, 0.01F, 0.002F, -0.004F, 1000, 15},
-             MitTrial{0, 0, 1, 0, 0, 1, 300, 15},
-             MitTrial{0, 0, 1, 0, 0, 0, 300, 0x10F},
+             MitTrial{0, 0, 1, 0, 0, 1, 300, 15}, MitTrial{0, 0, 1, 0, 0, 0, 300, 0x10F},
              MitTrial{0, 0, -1, 0, 0, -1, 300, 15}}) {
         command.mit_position = trial.position;
         command.mit_velocity = trial.velocity;
@@ -707,14 +704,16 @@ static void current_loop_tests() {
         CHECK(std::abs(alpha) < 0.001F);
     }
     sample.angle = 2;
-    CHECK(!controller.step(sample).enable);
-    CHECK(controller.telemetry().fault == Fault::encoder);
+    CHECK(controller.step(sample).enable);
+    CHECK(controller.telemetry().warnings & encoder_prediction);
+    CHECK(controller.telemetry().fault == Fault::none);
     command.controlword = 0x80;
     ++command.sequence;
     controller.command(command);
     for (int i = 0; i < 20; ++i) {
-        CHECK(!controller.step(sample).enable);
+        (void)controller.step(sample);
     }
+    CHECK(!controller.step(sample).enable);
     CHECK(controller.telemetry().fault == Fault::none);
     CHECK((controller.telemetry().statusword & 0x6F) == 0x40);
 }
@@ -750,7 +749,9 @@ static void commissioning_tests() {
         CHECK(controller.telemetry().fault == Fault::communication);
     }
     for (auto direction : {1, -1, 0}) {
-        Controller controller;
+        MotorConfig motor;
+        motor.pole_pairs = 7;
+        Controller controller{motor};
         Command command{};
         command.calibration_request = 1;
         Sample sample{{}, 12, 1, 25, true, true, true, true};
@@ -924,8 +925,10 @@ static void protocol_boundary_tests() {
         pdo.data[6] = 3;
         f.node.receive(pdo);
         CHECK(!f.process().network_ok);
-        CHECK(f.channels.asynchronous_fault.load() ==
-              static_cast<std::uint32_t>(drive::Fault::configuration));
+        CHECK(f.channels.asynchronous_fault.load() == 0);
+        CHECK(f.channels.communication_errors.load() != 0);
+        CHECK(f.sdo(0x6040, 0, 0x2B, 0).data[0] == 0x60);
+        CHECK(f.process().controlword == 0); // Invalid PDO cannot block an explicit stop.
         CHECK(f.sdo(0x6040, 0, 0x2B, 0x80).data[0] == 0x60);
         CHECK(f.process().network_ok);
         f.telemetry.statusword = 0x237;
@@ -1052,7 +1055,7 @@ static void communication_settings_tests() {
         CHECK(f.bus.configure_calls == 1);
         f.nmt(128);
         CHECK(f.sdo(0x1010, 1, 0x23, 0x65766173).data[0] == 0x60);
-        CHECK(f.bus.configure_calls == 1); // saving never changes the live transport
+        CHECK(f.bus.configure_calls == 1);                     // saving never changes the live transport
         CHECK(f.sdo(0x2001, 2, 0x23, 125000).data[0] == 0x60); // intentionally not saved
         f.nmt(130);
         CHECK(f.node.reset_requested());
@@ -1107,9 +1110,9 @@ static void legacy_settings_tests() {
         ProtocolFixture f{bytes};
         CHECK(f.storage.data.size() == bytes.size());
         CHECK(std::equal(f.storage.data.begin(), f.storage.data.end(), bytes.begin()));
-        CHECK(f.telemetry.config.electrical_offset == 1.25F && f.telemetry.config.torque_constant == 0.05F);
-        CHECK(f.telemetry.config.pole_pairs == 11 && f.telemetry.config.direction == -1);
-        CHECK(f.telemetry.config.current_limit == 0.2F && f.telemetry.config.calibrated == 1);
+        CHECK(f.telemetry.config.electrical_offset == 0 && f.telemetry.config.torque_constant == 0.23F);
+        CHECK(f.telemetry.config.pole_pairs == 11 && f.telemetry.config.direction == 1);
+        CHECK(f.telemetry.config.current_limit == 1.4F && f.telemetry.config.calibrated == 0);
         CHECK(OD_RAM.x2001_01 == 7 && OD_RAM.x1017_00 == 321);
         CHECK(f.bus.nominal == 1000000 && f.bus.data_bitrate == 5000000 && f.bus.brs);
         CHECK(OD_RAM.x1400_01 == 0x222 && OD_RAM.x1600_00 == 2 && OD_RAM.x1600_08 == 0x607A0020);
@@ -1119,12 +1122,12 @@ static void legacy_settings_tests() {
         CHECK(f.sdo(0x1010, 1, 0x23, 0x65766173).data[0] == 0x60);
         protocol::SavedSettings saved;
         CHECK(f.storage.read(std::as_writable_bytes(std::span{&saved, 1})));
-        CHECK(saved.version == 2 && saved.motor.calibrated == 1 && saved.motor.electrical_offset == 1.25F);
+        CHECK(saved.version == 3 && saved.motor.calibrated == 0 && saved.motor.electrical_offset == 0);
         CHECK(saved.dictionary.x2001_02 == 1000000 && saved.dictionary.x2001_03 == 5000000);
         CHECK(f.node.stop());
         protocol::Node rebooted{f.transport, f.channels, f.storage};
         const auto motor = rebooted.load_settings();
-        CHECK(motor.calibrated == 1 && motor.direction == -1 && motor.pole_pairs == 11);
+        CHECK(motor.calibrated == 0 && motor.direction == 1 && motor.pole_pairs == 11);
         CHECK(OD_RAM.x1600_08 == 0x607A0020 && OD_RAM.x2001_01 == 7);
     }
     // A v2 commit has a different payload length. At every flash operation,
@@ -1147,7 +1150,7 @@ static void legacy_settings_tests() {
         protocol::SavedSettings restored;
         CHECK(boot.read(std::as_writable_bytes(std::span{&restored, 1})) == completed);
         if (completed) {
-            CHECK(restored.version == 2 && restored.dictionary.x2001_03 == 8000000);
+            CHECK(restored.version == 3 && restored.dictionary.x2001_03 == 8000000);
         }
         protocol::SavedSettingsV1 previous;
         CHECK(boot.read(std::as_writable_bytes(std::span{&previous, 1})));
@@ -1174,7 +1177,146 @@ static void saved_settings_tests() {
     CHECK(OD_RAM.x60ff_00 == 0);
     CHECK(OD_RAM.x6040_00 == 0);
 }
+static void v2_regressions() {
+    CHECK(drivers::current_window_valid(3567, 0));
+    CHECK(!drivers::current_window_valid(3568, 0));
+    CHECK(drivers::current_window_valid(3715, 1));
+    CHECK(!drivers::current_window_valid(3716, 1));
+    CHECK(!drivers::current_window_valid(4000, 0));
+    CHECK(drivers::pwm_update_window(320, true, false));
+    CHECK(!drivers::pwm_update_window(319, true, false));
+    CHECK(!drivers::pwm_update_window(3000, false, false));
+    CHECK(!drivers::pwm_update_window(3000, true, true));
+    using namespace drive;
+    // Verify the actual line-voltage vector across all six sectors at the
+    // full linear limit, including zero/100 percent switching endpoints.
+    float minimum = 1, maximum = 0;
+    for (int n = 0; n < 7200; ++n) {
+        const float a = tau * static_cast<float>(n) / 7200.0F;
+        const AlphaBeta v{24 / sqrt3 * std::cos(a), 24 / sqrt3 * std::sin(a)};
+        const auto d = svpwm(v, 24);
+        const auto actual = clarke({24 * d.a, 24 * d.b, 24 * d.c});
+        CHECK(std::abs(actual.alpha - v.alpha) < 5e-6F);
+        CHECK(std::abs(actual.beta - v.beta) < 5e-6F);
+        minimum = std::min({minimum, d.a, d.b, d.c});
+        maximum = std::max({maximum, d.a, d.b, d.c});
+    }
+    CHECK(minimum < 1e-6F && maximum > 0.999999F);
+    CHECK(std::abs(velocity_ramp(1, -1, 100, 1, 0.001F) - 0.999F) < 1e-6F);
+    CHECK(std::abs(velocity_ramp(-1, 1, 100, 1, 0.001F) + 0.999F) < 1e-6F);
+    // A reversal crossing zero spends the remaining time accelerating.
+    CHECK(std::abs(velocity_ramp(0.0005F, -1, 100, 1, 0.001F) + 0.05F) < 1e-6F);
+    CurrentObserver observer;
+    const auto reconstructed = observer.update({1, 123, -0.25F}, 5, {}, {}, Controller::dt);
+    CHECK(std::abs(reconstructed.b + 0.75F) < 1e-6F);
+    // Independent discrete RL plant through a missing measurement interval.
+    observer.reset();
+    float plant = 0;
+    for (int i = 0; i < 1000; ++i) {
+        plant += (1.0F - 1.8F * plant) * Controller::dt / (0.0013F / 3.0F);
+        const auto estimate =
+            observer.update({plant, -plant / 2, -plant / 2}, i % 10 < 7 ? 7 : 0, {1, 0}, {}, Controller::dt);
+        CHECK(std::abs(estimate.a - plant) < 1e-5F);
+    }
+    MotorConfig motor;
+    motor.calibrated = 1;
+    Controller controller{motor};
+    Sample sample{{}, 24, 0, 25, true, true, true, true};
+    Command command;
+    command.operational = true;
+    command.mode = Mode::torque;
+    for (auto cw : {6, 7, 15}) {
+        command.controlword = static_cast<std::uint16_t>(cw);
+        ++command.sequence;
+        controller.command(command);
+        for (int i = 0; i < 20; ++i) {
+            (void)controller.step(sample);
+        }
+    }
+    CHECK(controller.step(sample).enable);
+    sample.encoder_ok = false;
+    for (int i = 0; i < 3; ++i) {
+        CHECK(controller.step(sample).enable);
+    }
+    sample.encoder_ok = true;
+    sample.angle = 0.01F;
+    CHECK(controller.step(sample).enable);
+    CHECK(!(controller.telemetry().warnings & encoder_prediction));
+    // Non-finite B/C currents must not clear a genuine prior fault during reset.
+    for (int phase : {1, 2}) {
+        controller.trip(Fault::configuration);
+        command.controlword = 0x8F;
+        ++command.sequence;
+        controller.command(command);
+        if (phase == 1) {
+            sample.current.b = std::numeric_limits<float>::quiet_NaN();
+        } else {
+            sample.current.c = std::numeric_limits<float>::quiet_NaN();
+        }
+        for (int i = 0; i < 40; ++i) {
+            CHECK(!controller.step(sample).enable);
+        }
+        CHECK(controller.telemetry().fault == Fault::configuration);
+        command.controlword = 0;
+        controller.command(command);
+        sample.current = {};
+        for (int i = 0; i < 20; ++i) {
+            (void)controller.step(sample);
+        }
+    }
+    // Reproduce the old endpoint-only false pole-count result: follow two
+    // electrical turns and stall. This must not become a 14-pair calibration.
+    MotorConfig seven;
+    seven.pole_pairs = 7;
+    Controller slipping{seven};
+    Command calibration;
+    calibration.calibration_request = 1;
+    sample = {{}, 24, 1, 25, true, true, true, true};
+    float previous = 0, travel = 0;
+    for (int i = 0; i < 140020; ++i) {
+        if (i % 20 == 0) {
+            ++calibration.sequence;
+            slipping.command(calibration);
+        }
+        const auto out = slipping.step(sample);
+        if (out.enable) {
+            const auto v = clarke(out.duty);
+            const float angle = std::atan2(v.beta, v.alpha);
+            travel += wrap_signed(angle - previous);
+            previous = angle;
+            if (travel < 2 * tau) {
+                sample.angle = wrap(1 + travel / 7);
+            }
+        }
+    }
+    CHECK(slipping.telemetry().calibration == Calibration::failed);
+    CHECK(slipping.telemetry().config.pole_pairs == 7 && !slipping.telemetry().config.calibrated);
+    {
+        ProtocolFixture f;
+        CHECK(f.sdo(0x1403, 1, 0x23, 0x501).data[0] == 0x60);
+        CHECK(f.sdo(0x2004, 1, 0x2F, 1).data[0] == 0x60);
+        CHECK(f.sdo(0x6060, 0, 0x2F, 5).data[0] == 0x60);
+        CHECK(f.sdo(0x6040, 0, 0x2B, 6).data[0] == 0x60);
+        // Both frames in the same receive batch: PDO predates NMT Start.
+        f.node.receive({0x501, 8, {0x10, 0, 0, 0, 0, 0, 0, 0}, false});
+        f.node.receive({0, 2, {1, 1}, false});
+        CHECK(f.process().controlword == 0);
+        f.node.receive({0x501, 8, {0x10, 0, 0, 0, 0, 0, 0, 0}, false});
+        CHECK(f.process().controlword == 6);
+    }
+    {
+        protocol::SavedSettings v2;
+        v2.version = 2;
+        v2.motor.calibrated = 1;
+        v2.motor.pole_pairs = 7;
+        OD_reset_defaults();
+        v2.dictionary = OD_RAM;
+        ProtocolFixture f{std::as_bytes(std::span{&v2, 1})};
+        CHECK(f.telemetry.config.pole_pairs == 11 && f.telemetry.config.calibrated == 0);
+    }
+}
 int main() {
+    v2_regressions();
     math_tests();
     state_tests();
     encoder_tests();

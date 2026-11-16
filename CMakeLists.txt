@@ -47,7 +47,7 @@ endif()
 # symbols and IEEE finite checks; optimize only the controller and ISR sources.
 target_compile_options(roller_domain PRIVATE -O2)
 set_source_files_properties(Application/src/application.cpp Platform/STM32/board.cpp Platform/STM32/cordic_math.cpp
-    Platform/STM32/ssc_dma.cpp Platform/STM32/pwm_dma.cpp Platform/STM32/bench.cpp PROPERTIES COMPILE_OPTIONS -O2)
+    Platform/STM32/ssi_dma.cpp Platform/STM32/pwm.cpp Platform/STM32/bench.cpp PROPERTIES COMPILE_OPTIONS -O2)
 # CubeMX owns this entire subdirectory. No generated build file is hand patched.
 add_subdirectory(cmake/stm32cubemx)
 set(FREERTOS_ROOT ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/FreeRTOS-Kernel)
@@ -56,8 +56,13 @@ add_library(freertos_kernel STATIC
     ${FREERTOS_ROOT}/portable/GCC/ARM_CM4F/port.c)
 target_include_directories(freertos_kernel PUBLIC RTOS ${FREERTOS_ROOT}/include ${FREERTOS_ROOT}/portable/GCC/ARM_CM4F)
 target_sources(${PROJECT_NAME} PRIVATE Application/src/application.cpp Platform/STM32/board.cpp Platform/STM32/flash_store.cpp Platform/STM32/cordic_math.cpp)
-target_sources(${PROJECT_NAME} PRIVATE Platform/STM32/ssc_dma.cpp Platform/STM32/pwm_dma.cpp)
+target_sources(${PROJECT_NAME} PRIVATE Platform/STM32/ssi_dma.cpp Platform/STM32/pwm.cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE Platform/STM32)
+option(ROLLER_NO_MOTION "Diagnostic build: nSLEEP low, PWM pins GPIO-low, no motor actuation" OFF)
+if(ROLLER_NO_MOTION)
+    target_compile_definitions(stm32cubemx INTERFACE ROLLER_NO_MOTION=1)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE ROLLER_NO_MOTION=1)
+endif()
 option(ROLLER_BENCH "Use SWD CANopen transport and profiling for an attended bench session" OFF)
 if(ROLLER_BENCH)
     target_sources(${PROJECT_NAME} PRIVATE Platform/STM32/bench.cpp)

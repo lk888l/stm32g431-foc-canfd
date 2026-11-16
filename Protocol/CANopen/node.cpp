@@ -24,13 +24,15 @@ float unpack(std::uint32_t x, std::uint32_t max, float low, float high) {
 drive::MotorConfig Node::load_settings() noexcept {
     OD_reset_defaults();
     SavedSettings settings{};
-    if (store_.read(std::as_writable_bytes(std::span{&settings, 1})) && settings.version == 2 &&
-        drive::Controller::valid_config(settings.motor) && settings.dictionary.x2001_01 >= 1 &&
-        settings.dictionary.x2001_01 <= 127 &&
+    if (store_.read(std::as_writable_bytes(std::span{&settings, 1})) &&
+        (settings.version == 2 || settings.version == 3) && drive::Controller::valid_config(settings.motor) &&
+        settings.dictionary.x2001_01 >= 1 && settings.dictionary.x2001_01 <= 127 &&
         roller_can_valid_nominal_bitrate(settings.dictionary.x2001_02) &&
         roller_can_valid_data_bitrate(settings.dictionary.x2001_03)) {
         OD_restore_parameters(&settings.dictionary);
-        telemetry_.config = settings.motor;
+        // v1/v2 belong to the old motor/encoder/pinout: keep communication
+        // parameters, never reuse their electrical angle or current calibration.
+        telemetry_.config = settings.version == 3 ? settings.motor : drive::MotorConfig{};
     } else {
         // The journal requires the exact payload size. Probe the frozen v1
         // record separately; migration does not erase or rewrite either page.
@@ -39,7 +41,7 @@ drive::MotorConfig Node::load_settings() noexcept {
             drive::Controller::valid_config(legacy.motor) && legacy.dictionary.x2001_01 >= 1 &&
             legacy.dictionary.x2001_01 <= 127) {
             OD_restore_parameters_v1(&legacy.dictionary);
-            telemetry_.config = legacy.motor;
+            telemetry_.config = drive::MotorConfig{};
         }
     }
     OD_RAM.x2100_06 = telemetry_.config.current_limit;
@@ -67,7 +69,7 @@ Result Node::on_start() noexcept {
         return std::unexpected(Error::hardware);
     }
     constexpr std::uint16_t policy =
-        CO_NMT_ERR_ON_BUSOFF_HB | CO_NMT_ERR_ON_ERR_REG | CO_ERR_REG_GENERIC_ERR | CO_ERR_REG_COMMUNICATION;
+        0; // Communications diagnostics do not implicitly change NMT/motor state.
     if (CO_CANopenInit(co_, nullptr, nullptr, OD, nullptr, policy, 500, 1000, 1000, false, id, &error_info) !=
         CO_ERROR_NO) {
         return std::unexpected(Error::configuration);
@@ -115,9 +117,11 @@ void Node::receive(const RollerCanFrame& frame) noexcept {
             for (std::uint16_t p = 0; p < OD_CNT_RPDO; ++p) {
                 const auto& rpdo = co_->RPDO[p];
                 if (b.object == &rpdo) {
+                    if (CO_NMT_getInternalState(co_->NMT) != CO_NMT_OPERATIONAL) {
+                        return;
+                    }
                     const auto logical_size = rpdo.PDO_common.dataLength;
-                    if (!rpdo.PDO_common.valid || logical_size == 0 ||
-                        frame.fd != (logical_size > 8) ||
+                    if (!rpdo.PDO_common.valid || logical_size == 0 || frame.fd != (logical_size > 8) ||
                         frame.size != roller_can_wire_size(logical_size)) {
                         return;
                     }
@@ -126,6 +130,7 @@ void Node::receive(const RollerCanFrame& frame) noexcept {
                     // bytes never become OD data or a false length error.
                     copy.size = logical_size;
                     pdo = true;
+                    invalid_pdo_ = false;
                     break;
                 }
             }
@@ -133,6 +138,26 @@ void Node::receive(const RollerCanFrame& frame) noexcept {
                 return; // SDO/NMT/SYNC/heartbeat remain classic CAN services.
             }
             b.CANrx_callback(b.object, &copy);
+            if (frame.ident == 0 && frame.size == 2 &&
+                (frame.data[1] == 0 || frame.data[1] == OD_RAM.x2001_01)) {
+                // Apply NMT in wire order, before dispatching the next queued PDO.
+                const auto previous = CO_NMT_getInternalState(co_->NMT);
+                const auto reset = CO_process(co_, false, 0, nullptr);
+                if (CO_NMT_getInternalState(co_->NMT) != previous) {
+                    seen_compressed_frame_ = false;
+                    seen_motion_command_ = false;
+                    invalid_pdo_ = false;
+                    for (unsigned rpdo_index = 0; rpdo_index < OD_CNT_RPDO; ++rpdo_index) {
+                        auto& rpdo = co_->RPDO[rpdo_index];
+                        CO_FLAG_CLEAR(rpdo.CANrxNew[0]);
+                        CO_FLAG_CLEAR(rpdo.CANrxNew[1]);
+                    }
+                }
+                if (reset != CO_RESET_NOT) {
+                    channels_.inhibit.store(true);
+                    reset_requested_ = true;
+                }
+            }
             break;
         }
     }
@@ -151,7 +176,11 @@ void Node::process(std::uint32_t elapsed_us) noexcept {
     const auto sync = CO_process_SYNC(co_, elapsed_us, nullptr);
     processing_rpdo_ = true;
     rpdo_half_mask_ = 0;
+    rpdo_snapshot_ = OD_RAM;
     CO_process_RPDO(co_, sync, elapsed_us, nullptr);
+    if (invalid_pdo_) {
+        OD_RAM = rpdo_snapshot_;
+    }
     processing_rpdo_ = false;
     if (rpdo_half_mask_ == 3 && compressed_mapping_valid() && !invalid_pdo_) {
         seen_compressed_frame_ = true;
@@ -161,8 +190,7 @@ void Node::process(std::uint32_t elapsed_us) noexcept {
         }
     } else if (OD_RAM.x2004_01 && (rpdo_half_mask_ != 0 || !compressed_mapping_valid())) {
         invalid_pdo_ = true;
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::configuration),
-                                           std::memory_order_release);
+        channels_.communication_errors.fetch_add(1, std::memory_order_relaxed);
     }
     report();
     publish();
@@ -174,13 +202,29 @@ void Node::process(std::uint32_t elapsed_us) noexcept {
     channels_.can_task_ticks.fetch_add(1, std::memory_order_relaxed);
 }
 void Node::publish() noexcept {
+    if (invalid_pdo_) {
+        command_.sequence = ++sequence_;
+        command_.network_ok = false;
+        command_.operational = CO_NMT_getInternalState(co_->NMT) == CO_NMT_OPERATIONAL;
+        command_.calibration_permitted = CO_NMT_getInternalState(co_->NMT) == CO_NMT_PRE_OPERATIONAL;
+        // SDO/controlword stops remain actionable while a PDO is rejected.
+        command_.controlword = OD_RAM.x6040_00;
+        if (command_.mode == drive::Mode::mit && OD_RAM.x2004_01 && !seen_compressed_frame_) {
+            command_.controlword &= 0x0080U;
+        }
+        const auto retained = drive::ValidatedCommand::make(command_);
+        if (retained) {
+            (void)channels_.commands.push(*retained);
+        }
+        return;
+    }
     command_.sequence = ++sequence_;
     command_.operational = CO_NMT_getInternalState(co_->NMT) == CO_NMT_OPERATIONAL;
     command_.calibration_permitted = CO_NMT_getInternalState(co_->NMT) == CO_NMT_PRE_OPERATIONAL;
     if (!command_.operational) {
         seen_compressed_frame_ = false;
     }
-    // A live CANopen task/heartbeat alone cannot keep an old motion command alive.
+    // Freshness is diagnostic; a healthy task/heartbeat does not renew a target.
     const bool bus_ok = (co_->CANmodule->CANerrorStatus &
                          (CO_CAN_ERRTX_BUS_OFF | CO_CAN_ERRRX_OVERFLOW | CO_CAN_ERRTX_OVERFLOW)) == 0;
     const bool active = (telemetry_.statusword & 0x6F) == 0x27 || (telemetry_.statusword & 0x6F) == 0x07;
@@ -224,14 +268,11 @@ void Node::publish() noexcept {
     }
     const auto validated = drive::ValidatedCommand::make(command_);
     if (!validated) {
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::configuration),
-                                           std::memory_order_release);
+        channels_.communication_errors.fetch_add(1, std::memory_order_relaxed);
         return;
     }
     if (!channels_.commands.push(*validated)) {
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::timing),
-                                           std::memory_order_release);
-        channels_.inhibit.store(true, std::memory_order_release);
+        channels_.communication_errors.fetch_add(1, std::memory_order_relaxed);
     }
 }
 void Node::report() noexcept {
@@ -334,8 +375,7 @@ ODR_t Node::write(OD_stream_t* stream, const void* buffer, OD_size_t count, OD_s
         // PDO has no SDO-style abort response. Never execute a partially valid
         // process-data command after rejecting one of its mapped fields.
         node.invalid_pdo_ = true;
-        node.channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::configuration),
-                                                std::memory_order_release);
+        node.channels_.communication_errors.fetch_add(1, std::memory_order_relaxed);
     }
     return result;
 }
@@ -370,11 +410,11 @@ ODR_t Node::on_write(OD_stream_t* s, const void* b, OD_size_t n, OD_size_t* writ
     if (idx == 0x2001 && (sub == 2 || sub == 3)) {
         const auto bitrate = decode<std::uint32_t>(b);
         if (!(sub == 2 ? roller_can_valid_nominal_bitrate(bitrate)
-                      : roller_can_valid_data_bitrate(bitrate))) {
+                       : roller_can_valid_data_bitrate(bitrate))) {
             return ODR_INVALID_VALUE;
         }
-        if (CO_NMT_getInternalState(co_->NMT) != CO_NMT_PRE_OPERATIONAL ||
-            !stopped(telemetry_.statusword) || OD_RAM.x6040_00 != 0 ||
+        if (CO_NMT_getInternalState(co_->NMT) != CO_NMT_PRE_OPERATIONAL || !stopped(telemetry_.statusword) ||
+            OD_RAM.x6040_00 != 0 ||
             (telemetry_.calibration >= drive::Calibration::align &&
              telemetry_.calibration <= drive::Calibration::settle)) {
             return ODR_DATA_DEV_STATE;
@@ -402,7 +442,7 @@ ODR_t Node::on_write(OD_stream_t* s, const void* b, OD_size_t n, OD_size_t* writ
         }
         if (sub == 6 || sub == 7) {
             const auto v = decode<float>(b);
-            if (!std::isfinite(v) || v <= (sub == 6 ? 0.0F : 0.001F) || v > (sub == 6 ? 0.5F : 1.0F)) {
+            if (!std::isfinite(v) || v <= (sub == 6 ? 0.0F : 0.001F) || v > (sub == 6 ? 4.9F : 1.0F)) {
                 return ODR_INVALID_VALUE;
             }
             // Configuration changes become active on the next saved reboot.
@@ -410,8 +450,8 @@ ODR_t Node::on_write(OD_stream_t* s, const void* b, OD_size_t n, OD_size_t* writ
     }
     if (idx == 0x6060) {
         const auto mode = decode<std::int8_t>(b);
-        if (mode != static_cast<std::int8_t>(drive::Mode::single_turn_position) && mode != 0 &&
-            mode != 1 && mode != 3 && mode != 4 && mode != 5) {
+        if (mode != static_cast<std::int8_t>(drive::Mode::single_turn_position) && mode != 0 && mode != 1 &&
+            mode != 3 && mode != 4 && mode != 5) {
             return ODR_INVALID_VALUE;
         }
         const auto state = telemetry_.statusword & 0x6F;

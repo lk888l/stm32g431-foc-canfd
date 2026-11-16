@@ -41,55 +41,21 @@
 */
 void MX_GPIO_Init(void)
 {
-
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  /* GPIO Ports Clock Enable */
+  GPIO_InitTypeDef init = {0};
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(ENC_CS_GPIO_Port, ENC_CS_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, DRV_ENABLE_Pin|PWM_ENABLE_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(CAN_STB_GPIO_Port, CAN_STB_Pin, GPIO_PIN_SET);
-
-  /*Configure GPIO pin : ENC_CS_Pin */
-  GPIO_InitStruct.Pin = ENC_CS_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  HAL_GPIO_Init(ENC_CS_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : DRV_FAULT_Pin */
-  GPIO_InitStruct.Pin = DRV_FAULT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(DRV_FAULT_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : DRV_ENABLE_Pin PWM_ENABLE_Pin CAN_STB_Pin */
-  GPIO_InitStruct.Pin = DRV_ENABLE_Pin|PWM_ENABLE_Pin|CAN_STB_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : USER_BUTTON_Pin */
-  GPIO_InitStruct.Pin = USER_BUTTON_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(USER_BUTTON_GPIO_Port, &GPIO_InitStruct);
-
-  /* EXTI interrupt init*/
-  HAL_NVIC_SetPriority(EXTI0_IRQn, 1, 0);
-  HAL_NVIC_EnableIRQ(EXTI0_IRQn);
-
+  HAL_GPIO_WritePin(DRV_ENABLE_GPIO_Port, DRV_ENABLE_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin, GPIO_PIN_RESET);
+  init.Pin = ENC_CS_Pin;
+  init.Mode = GPIO_MODE_OUTPUT_PP;
+  init.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(ENC_CS_GPIO_Port, &init);
+  init.Pin = DRV_ENABLE_Pin;
+  init.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(DRV_ENABLE_GPIO_Port, &init);
+  init.Pin = STATUS_LED_Pin;
+  HAL_GPIO_Init(STATUS_LED_GPIO_Port, &init);
+  // PA2/PA3 reserved for USART2; USB PA11/PA12 unconfigured.
 }
-
-/* USER CODE BEGIN 2 */
-
-/* USER CODE END 2 */

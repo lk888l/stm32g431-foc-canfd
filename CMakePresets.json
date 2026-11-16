@@ -1,6 +1,10 @@
 {
     "version": 6,
-    "cmakeMinimumRequired": {"major": 3, "minor": 25, "patch": 0},
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 25,
+        "patch": 0
+    },
     "configurePresets": [
         {
             "name": "firmware",
@@ -9,23 +13,73 @@
             "binaryDir": "${sourceDir}/build/${presetName}",
             "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake"
         },
-        {"name": "Debug", "inherits": "firmware", "cacheVariables": {"CMAKE_BUILD_TYPE": "Debug"}},
-        {"name": "Release", "inherits": "firmware", "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}},
-        {"name": "Bench", "inherits": "Debug", "cacheVariables": {"ROLLER_BENCH": "ON"}},
+        {
+            "name": "Debug",
+            "inherits": "firmware",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Release",
+            "inherits": "firmware",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "Bench",
+            "inherits": "Debug",
+            "cacheVariables": {
+                "ROLLER_BENCH": "ON"
+            }
+        },
         {
             "name": "Host",
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/Host",
-            "cacheVariables": {"ROLLER_HOST_TESTS": "ON", "CMAKE_BUILD_TYPE": "Debug"}
+            "cacheVariables": {
+                "ROLLER_HOST_TESTS": "ON",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "Bringup",
+            "inherits": "Bench",
+            "cacheVariables": {
+                "ROLLER_NO_MOTION": "ON"
+            }
         }
     ],
     "buildPresets": [
-        {"name": "Debug", "configurePreset": "Debug"},
-        {"name": "Release", "configurePreset": "Release"},
-        {"name": "Bench", "configurePreset": "Bench"},
-        {"name": "Host", "configurePreset": "Host"}
+        {
+            "name": "Debug",
+            "configurePreset": "Debug"
+        },
+        {
+            "name": "Release",
+            "configurePreset": "Release"
+        },
+        {
+            "name": "Bench",
+            "configurePreset": "Bench"
+        },
+        {
+            "name": "Host",
+            "configurePreset": "Host"
+        },
+        {
+            "name": "Bringup",
+            "configurePreset": "Bringup"
+        }
     ],
     "testPresets": [
-        {"name": "Host", "configurePreset": "Host", "output": {"outputOnFailure": true}}
+        {
+            "name": "Host",
+            "configurePreset": "Host",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
     ]
 }

@@ -57,33 +57,28 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define VBUS_Pin GPIO_PIN_0
-#define VBUS_GPIO_Port GPIOA
-#define CURRENT_A_Pin GPIO_PIN_1
+#define VBUS_Pin GPIO_PIN_4
+#define VBUS_GPIO_Port GPIOC
+#define CURRENT_A_Pin GPIO_PIN_0
 #define CURRENT_A_GPIO_Port GPIOA
-#define CURRENT_B_Pin GPIO_PIN_2
+#define CURRENT_B_Pin GPIO_PIN_1
 #define CURRENT_B_GPIO_Port GPIOA
-#define CURRENT_C_Pin GPIO_PIN_3
-#define CURRENT_C_GPIO_Port GPIOA
-#define ENC_CS_Pin GPIO_PIN_4
+#define CURRENT_C_Pin GPIO_PIN_0
+#define CURRENT_C_GPIO_Port GPIOB
+#define NTC_Pin GPIO_PIN_1
+#define NTC_GPIO_Port GPIOB
+#define ENC_CS_Pin GPIO_PIN_15
 #define ENC_CS_GPIO_Port GPIOA
-#define DRV_FAULT_Pin GPIO_PIN_0
-#define DRV_FAULT_GPIO_Port GPIOB
-#define DRV_FAULT_EXTI_IRQn EXTI0_IRQn
-#define DRV_ENABLE_Pin GPIO_PIN_1
+#define DRV_ENABLE_Pin GPIO_PIN_10
 #define DRV_ENABLE_GPIO_Port GPIOB
-#define PWM_ENABLE_Pin GPIO_PIN_2
-#define PWM_ENABLE_GPIO_Port GPIOB
-#define USER_BUTTON_Pin GPIO_PIN_6
-#define USER_BUTTON_GPIO_Port GPIOC
-#define PWM_C_Pin GPIO_PIN_8
-#define PWM_C_GPIO_Port GPIOA
+#define STATUS_LED_Pin GPIO_PIN_6
+#define STATUS_LED_GPIO_Port GPIOC
+#define PWM_A_Pin GPIO_PIN_8
+#define PWM_A_GPIO_Port GPIOA
 #define PWM_B_Pin GPIO_PIN_9
 #define PWM_B_GPIO_Port GPIOA
-#define PWM_A_Pin GPIO_PIN_10
-#define PWM_A_GPIO_Port GPIOA
-#define CAN_STB_Pin GPIO_PIN_4
-#define CAN_STB_GPIO_Port GPIOB
+#define PWM_C_Pin GPIO_PIN_10
+#define PWM_C_GPIO_Port GPIOA
 
 /* USER CODE BEGIN Private defines */
 

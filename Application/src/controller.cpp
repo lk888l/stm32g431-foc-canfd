@@ -8,7 +8,7 @@ using namespace control;
 bool Controller::valid_config(const MotorConfig& c) noexcept {
     return std::isfinite(c.electrical_offset) && c.electrical_offset >= 0 && c.electrical_offset < tau &&
            std::isfinite(c.torque_constant) && c.torque_constant > 0.001F && c.torque_constant <= 1.0F &&
-           std::isfinite(c.current_limit) && c.current_limit > 0 && c.current_limit <= 0.5F &&
+           std::isfinite(c.current_limit) && c.current_limit > 0 && c.current_limit <= 4.9F &&
            c.pole_pairs >= 1 && c.pole_pairs <= 32 && (c.direction == 1 || c.direction == -1) &&
            c.calibrated <= 1;
 }
@@ -34,7 +34,7 @@ bool Controller::valid_command(const Command& c) noexcept {
 void Controller::command(const Command& value) noexcept {
     const auto validated = ValidatedCommand::make(value);
     if (!validated) {
-        trip(Fault::configuration);
+        telemetry_.warnings |= math_warning;
         return;
     }
     command(*validated);
@@ -70,7 +70,8 @@ void Controller::outer_step(const Sample& s) noexcept {
     const bool resetting = (command_.controlword & 0x80) && !(previous_cw_ & 0x80);
     const bool inputs_ok =
         s.encoder_ok && s.adc_ok && s.driver_ok && s.current_calibrated && s.bus_voltage >= 4.5F &&
-        s.bus_voltage <= 16.0F && s.mcu_temperature < 85.0F &&
+        s.bus_voltage <= 35.0F && s.mcu_temperature < 125.0F && std::isfinite(s.current.a) &&
+        std::isfinite(s.current.b) && std::isfinite(s.current.c) &&
         std::max({std::abs(s.current.a), std::abs(s.current.b), std::abs(s.current.c)}) < 0.1F &&
         command_.network_ok && command_age_ < 2000 && valid_config(config_);
     if (resetting && inputs_ok) {
@@ -125,9 +126,8 @@ void Controller::outer_step(const Sample& s) noexcept {
             const auto desired = (command_.controlword & 0x100)
                                      ? 0.0F
                                      : std::copysign(std::min(command_.profile_velocity, braking), error);
-            const auto rate = std::abs(desired) < std::abs(velocity_setpoint_) ? command_.deceleration
-                                                                               : command_.acceleration;
-            velocity_setpoint_ = slew(velocity_setpoint_, desired, rate, 0.001F);
+            velocity_setpoint_ = velocity_ramp(velocity_setpoint_, desired, command_.acceleration,
+                                               command_.deceleration, 0.001F);
             const auto increment = velocity_setpoint_ * 0.001F;
             if (increment * error >= 0 && std::abs(increment) >= std::abs(error)) {
                 position_setpoint_ = target_position_;
@@ -143,7 +143,7 @@ void Controller::outer_step(const Sample& s) noexcept {
                     ++following_ticks_;
                 }
                 if (following_ticks_ >= command_.following_ms) {
-                    trip(Fault::following);
+                    telemetry_.warnings |= following_warning;
                 }
             } else {
                 following_ticks_ = 0;
@@ -152,9 +152,8 @@ void Controller::outer_step(const Sample& s) noexcept {
         }
         case Mode::velocity: {
             const auto desired = (command_.controlword & 0x100) ? 0.0F : command_.velocity;
-            const auto rate = std::abs(desired) < std::abs(velocity_setpoint_) ? command_.deceleration
-                                                                               : command_.acceleration;
-            velocity_setpoint_ = slew(velocity_setpoint_, desired, rate, 0.001F);
+            velocity_setpoint_ = velocity_ramp(velocity_setpoint_, desired, command_.acceleration,
+                                               command_.deceleration, 0.001F);
             iq_target_ = velocity_pi_.step((velocity_setpoint_ - telemetry_.velocity) * tau, 0.001F, max_i);
             break;
         }
@@ -181,99 +180,152 @@ void Controller::outer_step(const Sample& s) noexcept {
     previous_cw_ = command_.controlword;
 }
 Output Controller::calibration_step(const Sample& s) noexcept {
-    // Four electrical turns average cogging/stiction; measure the endpoint only
-    // after settling. One weak, moving endpoint gave inconsistent pole counts.
+    // Pole pairs are known from the motor specification. Never replace 11 with
+    // an apparently plausible count computed from a slipping rotor's endpoints.
     ++calibration_tick_;
     float theta = 0;
     if (calibration_ == Calibration::align && calibration_tick_ >= 10000) {
         calibration_start_ = tracker_.position();
+        calibration_segment_start_ = calibration_start_;
         calibration_tick_ = 0;
+        calibration_segments_ = 0;
+        calibration_direction_ = 0;
+        offset_count_ = 0;
+        offset_sine_ = 0;
+        offset_cosine_ = 0;
         calibration_ = Calibration::sweep;
     } else if (calibration_ == Calibration::sweep) {
-        theta = wrap(4.0F * tau * static_cast<float>(calibration_tick_) / 120000.0F);
+        const bool reverse = calibration_tick_ > 60000;
+        const float travel = 4.0F * tau *
+                             static_cast<float>(reverse ? 120000 - calibration_tick_ : calibration_tick_) /
+                             60000.0F;
+        theta = wrap(travel);
+        if (calibration_tick_ % 10000 == 0) {
+            const float moved = tracker_.position() - calibration_segment_start_;
+            const float expected = (4.0F * tau / 6.0F) / static_cast<float>(config_.pole_pairs);
+            if (!calibration_direction_) {
+                calibration_direction_ = moved >= 0 ? 1 : -1;
+            }
+            const float signed_motion =
+                moved * static_cast<float>(calibration_direction_) * (reverse ? -1.0F : 1.0F);
+            if (signed_motion < expected * 0.65F || signed_motion > expected * 1.35F) {
+                calibration_ = Calibration::failed;
+                trip(Fault::calibration);
+                return {};
+            }
+            calibration_segment_start_ = tracker_.position();
+            ++calibration_segments_;
+        }
+        if (calibration_direction_ && calibration_tick_ % 20 == 0 && calibration_tick_ > 10000 &&
+            (calibration_tick_ < 60000 || calibration_tick_ > 70000)) {
+            const auto offset = wrap(static_cast<float>(calibration_direction_) *
+                                         static_cast<float>(config_.pole_pairs) * s.angle -
+                                     theta);
+            const auto sc = trig_(offset);
+            offset_sine_ += sc.sine;
+            offset_cosine_ += sc.cosine;
+            ++offset_count_;
+        }
         if (calibration_tick_ >= 120000) {
             calibration_ = Calibration::settle;
             calibration_tick_ = 0;
             theta = 0;
         }
     } else if (calibration_ == Calibration::settle && calibration_tick_ >= 10000) {
-        calibration_end_ = tracker_.position();
-        const auto travel = calibration_end_ - calibration_start_;
-        const auto estimate = 4.0F * tau / std::abs(travel);
-        if (!std::isfinite(estimate) || estimate < 0.8F || estimate > 32.2F ||
-            std::abs(estimate - std::round(estimate)) > 0.15F || std::abs(tracker_.velocity()) > 0.1F) {
+        const float concentration = std::hypot(offset_sine_, offset_cosine_) /
+                                    static_cast<float>(std::max<std::uint32_t>(1U, offset_count_));
+        if (calibration_segments_ != 12 || concentration < 0.95F ||
+            std::abs(tracker_.position() - calibration_start_) > 0.15F ||
+            std::abs(tracker_.velocity()) > 0.1F) {
             calibration_ = Calibration::failed;
             trip(Fault::calibration);
             return {};
         }
-        config_.pole_pairs = static_cast<std::uint16_t>(std::round(estimate));
-        config_.direction = travel > 0 ? 1 : -1;
-        config_.electrical_offset =
-            wrap(static_cast<float>(config_.direction) * static_cast<float>(config_.pole_pairs) * s.angle);
+        config_.direction = calibration_direction_;
+        config_.electrical_offset = wrap(std::atan2(offset_sine_, offset_cosine_));
         config_.calibrated = 1;
         calibration_ = Calibration::complete;
-        telemetry_.config = config_;
         reset_loops();
         return {};
     }
-    const auto [sine, cosine] = trig_(theta);
-    if (!std::isfinite(sine) || !std::isfinite(cosine)) {
-        trip(Fault::configuration);
-        return {};
-    }
-    return {svpwm({1.2F * cosine, 1.2F * sine}, s.bus_voltage), true};
+    const auto sc = trig_(theta);
+    return {svpwm({1.2F * sc.cosine, 1.2F * sc.sine}, s.bus_voltage), true};
 }
 Output Controller::step(const Sample& s) noexcept {
     ++ticks_;
     if (command_age_ < 0xFFFFFFFFU) {
         ++command_age_;
     }
+    telemetry_.warnings = 0;
     const bool finite = std::isfinite(s.bus_voltage) && std::isfinite(s.mcu_temperature) &&
                         std::isfinite(s.current.a) && std::isfinite(s.current.b) &&
                         std::isfinite(s.current.c);
-    if (!finite || !s.adc_ok) {
-        trip(Fault::configuration);
-    }
     if (!s.driver_ok) {
         trip(Fault::driver);
     }
-    if (fault_ != Fault::none && (command_.controlword & 0x80) && !(previous_cw_ & 0x80) && s.encoder_ok) {
-        tracker_.resynchronize(s.angle);
+    const float elapsed_angle = dt * static_cast<float>(missed_angles_ + 1U);
+    bool angle_ok = s.encoder_ok && tracker_.update(s.angle, elapsed_angle);
+    if (angle_ok) {
+        last_angle_ = s.angle;
+        missed_angles_ = 0;
+        angle_initialized_ = true;
+    } else {
+        missed_angles_ = std::min<std::uint32_t>(missed_angles_ + 1U, 20000U);
+        ++telemetry_.encoder_missed;
+        telemetry_.warnings |= encoder_prediction;
     }
-    const bool angle_ok = s.encoder_ok && tracker_.update(s.angle, dt);
-    if (!angle_ok) {
-        trip(Fault::encoder);
+    if (!finite) {
+        telemetry_.warnings |= math_warning;
     }
-    if (s.bus_voltage > 16.0F) {
-        trip(Fault::overvoltage);
+    if (s.bus_voltage < 4.5F || s.bus_voltage > 35.0F) {
+        telemetry_.warnings |= voltage_warning;
     }
-    if (s.bus_voltage < 4.5F) {
-        trip(Fault::undervoltage);
+    if (s.mcu_temperature >= 100.0F) {
+        telemetry_.warnings |= temperature_warning;
     }
-    if (s.mcu_temperature >= 85.0F) {
-        trip(Fault::temperature);
+    if (s.current_calibrated && s.current_mask == 7 &&
+        std::max({std::abs(s.current.a), std::abs(s.current.b), std::abs(s.current.c)}) > 4.9F) {
+        telemetry_.warnings |= current_warning;
     }
-    if (s.current_calibrated &&
-        std::max({std::abs(s.current.a), std::abs(s.current.b), std::abs(s.current.c)}) > 0.75F) {
-        trip(Fault::overcurrent);
-    }
-    if (!command_.network_ok ||
-        (command_age_ > 2000 && (state_.state() == State::enabled || state_.state() == State::quick_stop))) {
-        trip(Fault::communication);
+    if (!command_.network_ok || command_age_ > 2000) {
+        telemetry_.warnings |= communication_warning;
     }
     telemetry_.samples = ticks_;
     telemetry_.command_sequence = command_.sequence;
-    telemetry_.position = static_cast<float>(config_.direction) * tracker_.position() / tau;
-    telemetry_.velocity = static_cast<float>(config_.direction) * tracker_.velocity() / tau;
-    telemetry_.bus_voltage = s.bus_voltage;
-    telemetry_.mcu_temperature = s.mcu_temperature;
-    telemetry_.phase_current = s.current;
-    const auto angle =
-        wrap(static_cast<float>(config_.direction) * static_cast<float>(config_.pole_pairs) * s.angle -
-             config_.electrical_offset);
-    const auto [sine, cosine] = trig_(angle);
-    const bool trig_ok = std::isfinite(sine) && std::isfinite(cosine);
-    const auto currents = (finite && angle_ok && trig_ok) ? park(clarke(s.current), sine, cosine) : Dq{};
+    const float age = dt * static_cast<float>(missed_angles_);
+    const float speed = tracker_.velocity();
+    telemetry_.position = static_cast<float>(config_.direction) * (tracker_.position() + speed * age) / tau;
+    telemetry_.velocity = static_cast<float>(config_.direction) * speed / tau;
+    if (std::isfinite(s.bus_voltage)) {
+        telemetry_.bus_voltage = s.bus_voltage;
+    }
+    if (std::isfinite(s.mcu_temperature)) {
+        telemetry_.mcu_temperature = s.mcu_temperature;
+    }
+    const float electrical_speed =
+        static_cast<float>(config_.direction) * static_cast<float>(config_.pole_pairs) * speed;
+    const float base =
+        static_cast<float>(config_.direction) * static_cast<float>(config_.pole_pairs) * last_angle_ -
+        config_.electrical_offset;
+    const auto [sine, cosine] = trig_(wrap(base + electrical_speed * (age + s.current_angle_delay)));
+    const auto voltage_sc = trig_(wrap(base + electrical_speed * (age + s.voltage_angle_delay)));
+    const bool trig_ok = std::isfinite(sine) && std::isfinite(cosine) && std::isfinite(voltage_sc.sine) &&
+                         std::isfinite(voltage_sc.cosine);
+    const auto mask = static_cast<std::uint8_t>(finite && s.adc_ok ? s.current_mask & 7U : 0U);
+    if (mask != 7) {
+        ++telemetry_.current_predicted;
+        telemetry_.warnings |= current_prediction;
+    }
+    // Kt=1.5*p*flux in the amplitude-invariant dq convention (an initial estimate).
+    const float emf_q = config_.torque_constant * telemetry_.velocity * tau / 1.5F;
+    const auto emf = trig_ok ? inverse_park({0, emf_q}, sine, cosine) : AlphaBeta{};
+    const bool applied_finite =
+        std::isfinite(s.applied_voltage.alpha) && std::isfinite(s.applied_voltage.beta);
+    const auto voltage =
+        s.applied_voltage_valid && applied_finite ? s.applied_voltage : clarke(telemetry_.phase_voltage);
+    const auto estimated = observer_.update(finite ? s.current : Abc{}, mask, voltage, emf, dt);
+    telemetry_.phase_current = estimated;
+    const auto currents = trig_ok ? park(clarke(estimated), sine, cosine) : Dq{};
     telemetry_.id = currents.d;
     telemetry_.iq = currents.q;
     if (!initialized_) {
@@ -285,12 +337,15 @@ Output Controller::step(const Sample& s) noexcept {
     }
     // A simultaneous controlword reset must not clear a persistent math fault.
     if (!trig_ok) {
-        trip(Fault::configuration);
+        telemetry_.warnings |= math_warning;
+        if (!previous_output_.enable) {
+            trip(Fault::configuration);
+        }
     }
     if (command_.calibration_request != calibration_seen_) {
         calibration_seen_ = command_.calibration_request;
         if (state_.state() == State::disabled && command_.calibration_permitted && !command_.operational &&
-            fault_ == Fault::none && s.current_calibrated) {
+            fault_ == Fault::none && s.current_calibrated && angle_ok && finite) {
             calibration_ = Calibration::align;
             calibration_tick_ = 0;
             config_.calibrated = 0;
@@ -313,24 +368,33 @@ Output Controller::step(const Sample& s) noexcept {
         if (!command_.calibration_permitted || command_.operational || command_age_ > 2000) {
             trip(Fault::communication);
             calibration_ = Calibration::failed;
+        } else if (!angle_ok || !finite) {
+            calibration_ = Calibration::failed;
+            trip(Fault::calibration);
         } else {
             output = calibration_step(s);
         }
     } else if (state_.state() == State::enabled || state_.state() == State::quick_stop) {
-        const auto limit = std::min(4.0F, s.bus_voltage * 0.40F);
-        const Dq requested{d_pi_.step(-currents.d, dt, limit),
-                           q_pi_.step(iq_target_ - currents.q, dt, limit)};
-        const auto applied = limit_vector(requested, limit);
-        d_pi_.track(applied.d, requested.d);
-        q_pi_.track(applied.q, requested.q);
-        output = {svpwm(inverse_park(applied, sine, cosine), s.bus_voltage), true};
+        if (!trig_ok || !finite) {
+            output = previous_output_; // Freeze PI state as well as the last applied duty.
+        } else {
+            const auto limit = std::max(0.0F, telemetry_.bus_voltage) / sqrt3;
+            const Dq requested{d_pi_.step(-currents.d, dt, limit),
+                               q_pi_.step(iq_target_ - currents.q, dt, limit)};
+            const auto applied = limit_vector(requested, limit);
+            d_pi_.track(applied.d, requested.d);
+            q_pi_.track(applied.q, requested.q);
+            output = {
+                svpwm(inverse_park(applied, voltage_sc.sine, voltage_sc.cosine), telemetry_.bus_voltage),
+                true};
+        }
     }
     const auto common = (output.duty.a + output.duty.b + output.duty.c) / 3.0F;
-    telemetry_.phase_voltage = output.enable && finite ? Abc{(output.duty.a - common) * s.bus_voltage,
-                                                             (output.duty.b - common) * s.bus_voltage,
-                                                             (output.duty.c - common) * s.bus_voltage}
-                                                       : Abc{};
-    telemetry_.statusword = state_.status() | (setpoint_ack_ ? 0x1000 : 0);
+    telemetry_.phase_voltage = output.enable ? Abc{(output.duty.a - common) * telemetry_.bus_voltage,
+                                                   (output.duty.b - common) * telemetry_.bus_voltage,
+                                                   (output.duty.c - common) * telemetry_.bus_voltage}
+                                             : Abc{};
+    telemetry_.statusword = state_.status() | (setpoint_ack_ ? 0x1000 : 0) | (telemetry_.warnings ? 0x80 : 0);
     if (state_.state() == State::enabled && is_position_mode(command_.mode) &&
         std::abs(target_position_ - telemetry_.position) < 0.001F && std::abs(telemetry_.velocity) < 0.05F) {
         telemetry_.statusword |= 0x0400;
@@ -338,9 +402,10 @@ Output Controller::step(const Sample& s) noexcept {
     telemetry_.fault = fault_;
     telemetry_.calibration = calibration_;
     telemetry_.config = config_;
-    if (fault_ != Fault::none) {
+    if (fault_ != Fault::none || !angle_initialized_) {
         output.enable = false;
     }
+    previous_output_ = output;
     return output;
 }
 } // namespace roller::drive

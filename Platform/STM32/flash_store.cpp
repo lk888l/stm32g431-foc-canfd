@@ -36,7 +36,7 @@ bool FlashStore::read(std::span<std::byte> data) noexcept {
     return journal.read(data);
 }
 bool FlashStore::write(std::span<const std::byte> data) noexcept {
-    if (data.empty() || data.size() > ParameterJournal::max_payload || (GPIOB->ODR & PWM_ENABLE_Pin)) {
+    if (data.empty() || data.size() > ParameterJournal::max_payload || (TIM1->CCER & TIM_CCER_CC1E)) {
         return false;
     }
     const bool resume = board_.sampling();

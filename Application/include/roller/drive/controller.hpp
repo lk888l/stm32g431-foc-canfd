@@ -1,4 +1,5 @@
 #pragma once
+#include "roller/control/current_observer.hpp"
 #include "roller/control/math.hpp"
 #include "roller/drive/state_machine.hpp"
 #include <cstdint>
@@ -31,12 +32,22 @@ enum class Fault : std::uint16_t {
     calibration = 0x8312,
     following = 0x8500
 };
+enum Warning : std::uint32_t {
+    encoder_prediction = 1U,
+    current_prediction = 2U,
+    communication_warning = 4U,
+    following_warning = 8U,
+    voltage_warning = 16U,
+    temperature_warning = 32U,
+    current_warning = 64U,
+    math_warning = 128U
+};
 enum class Calibration : std::uint8_t { required, align, sweep, settle, complete, failed };
 struct MotorConfig {
     float electrical_offset{};
-    float torque_constant{60.0F / (control::tau * 200.0F)}; // KV-derived estimate, not a torque calibration.
-    float current_limit{0.25F};
-    std::uint16_t pole_pairs{7};
+    float torque_constant{0.23F}; // 4015 datasheet; line-current dq convention still needs measurement.
+    float current_limit{1.4F};
+    std::uint16_t pole_pairs{11};
     std::int8_t direction{1};
     std::uint8_t calibrated{};
 };
@@ -72,13 +83,17 @@ struct Sample {
     control::Abc current{};
     float bus_voltage{}, angle{}, mcu_temperature{25};
     bool encoder_ok{}, driver_ok{}, adc_ok{true}, current_calibrated{};
+    std::uint8_t current_mask{7};
+    float current_angle_delay{}, voltage_angle_delay{};
+    control::AlphaBeta applied_voltage{};
+    bool applied_voltage_valid{};
 };
 struct Output {
     control::Abc duty{0.5F, 0.5F, 0.5F};
     bool enable{};
 };
 struct Telemetry {
-    std::uint32_t samples{}, command_sequence{};
+    std::uint32_t samples{}, command_sequence{}, warnings{}, encoder_missed{}, current_predicted{};
     float position{}, velocity{}, bus_voltage{}, mcu_temperature{}, iq{}, id{};
     control::Abc phase_current{}, phase_voltage{};
     std::uint16_t statusword{0x0240};
@@ -123,13 +138,23 @@ class Controller {
     Telemetry telemetry_{};
     StateMachine state_{};
     control::AngleTracker tracker_{};
-    control::Pi d_pi_{2.0F, 600.0F}, q_pi_{2.0F, 600.0F}, velocity_pi_{0.06F, 0.15F};
+    control::Pi d_pi_{control::motor_inductance * control::tau * control::current_bandwidth,
+                      control::motor_resistance * control::tau * control::current_bandwidth},
+        q_pi_{control::motor_inductance * control::tau * control::current_bandwidth,
+              control::motor_resistance * control::tau * control::current_bandwidth},
+        velocity_pi_{0.06F, 0.15F};
+    control::CurrentObserver observer_{};
+    Output previous_output_{};
+    std::uint32_t missed_angles_{}, calibration_segments_{}, offset_count_{};
+    float last_angle_{}, calibration_segment_start_{}, offset_sine_{}, offset_cosine_{};
+    std::int8_t calibration_direction_{};
+    bool angle_initialized_{};
     Fault fault_{};
     Calibration calibration_{Calibration::required};
     std::uint32_t ticks_{}, command_age_{}, calibration_tick_{}, calibration_seen_{};
     std::uint16_t previous_cw_{}, following_ticks_{};
     float iq_target_{}, velocity_setpoint_{}, position_setpoint_{}, target_position_{};
-    float calibration_start_{}, calibration_end_{};
+    float calibration_start_{};
     bool setpoint_ack_{}, initialized_{};
 };
 } // namespace roller::drive

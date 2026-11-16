@@ -11,6 +11,7 @@
 #include "static_task.hpp"
 #include "tim.h"
 #include <algorithm>
+#include <cstring>
 #ifdef ROLLER_BENCH
 #include "bench.hpp"
 #endif
@@ -29,9 +30,8 @@ roller::drive::Controller controller;
 roller::ModuleManager<2> modules;
 roller::rtos::StaticTask<1024> can_task;
 roller::rtos::StaticTask<256> supervisor_task;
-std::uint32_t previous_sample_cycle{}, frame_start_cycle{};
+std::uint32_t frame_start_cycle{};
 void control_ready();
-std::uint16_t previous_controlword{};
 roller::drive::ValidatedCommand incoming_command;
 struct DebugStatus {
     volatile std::uint32_t panic{}, can_stack_free{}, supervisor_stack_free{}, sample_count{},
@@ -46,7 +46,7 @@ DebugStatus roller_debug{};
 extern "C" void roller_panic(const char* reason) {
     __disable_irq();
     roller::platform::Board::gate_off();
-    GPIOB->BSRR = static_cast<std::uint32_t>(GPIO_PIN_1) << 16;
+    DRV_ENABLE_GPIO_Port->BSRR = static_cast<std::uint32_t>(DRV_ENABLE_Pin) << 16;
     roller_debug.panic = 1;
     roller_debug.reason = reason;
     for (;;) {
@@ -60,23 +60,14 @@ void begin_frame(unsigned half) {
     }
     const auto start = DWT->CYCCNT;
     frame_start_cycle = start;
-    const bool active = (GPIOB->ODR & PWM_ENABLE_Pin) != 0;
-    if (previous_sample_cycle && start - previous_sample_cycle > 12000 && active) {
-        controller.trip(roller::drive::Fault::timing);
-        board.gate_off();
-    }
-    previous_sample_cycle = start;
-    if (!board.begin_sample(half, control_ready)) {
-        controller.trip(roller::drive::Fault::timing);
-        control_ready();
-    }
+    (void)board.begin_sample(half, control_ready);
 }
 void control_ready() {
     if (!board.sampling()) {
         return;
     }
-    // The ADC DMA frame joins the encoder transaction launched at the PWM
-    // period boundary. Include any remaining SPI wait in the deadline/profile.
+    // ADC DMA completes after the SSI transfer. Missing data is predicted;
+    // this ISR never waits for an encoder transaction.
     const auto start = frame_start_cycle;
     if (auto fault = channels.asynchronous_fault.exchange(0, std::memory_order_acq_rel); fault) {
         controller.trip(static_cast<roller::drive::Fault>(fault));
@@ -101,10 +92,7 @@ void control_ready() {
     if (elapsed > channels.isr_max_cycles.load(std::memory_order_relaxed)) {
         channels.isr_max_cycles.store(elapsed, std::memory_order_relaxed);
     }
-    if (elapsed > 7200) {
-        board.gate_off();
-        controller.trip(roller::drive::Fault::timing);
-    }
+    roller_hardware.warnings = controller.telemetry().warnings;
 }
 } // namespace
 extern "C" void roller_app_encoder_trigger() {
@@ -115,10 +103,6 @@ extern "C" void roller_app_encoder_trigger() {
         controller.trip(static_cast<roller::drive::Fault>(fault));
     }
     if (channels.commands.latest(incoming_command)) {
-        if ((incoming_command.get().controlword & 0x80) && !(previous_controlword & 0x80)) {
-            board.acknowledge_encoder();
-        }
-        previous_controlword = incoming_command.get().controlword;
         controller.command(incoming_command);
     }
     board.encoder_trigger();
@@ -133,19 +117,14 @@ extern "C" void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* adc) {
         begin_frame(1);
     }
 }
-extern "C" void HAL_ADC_ErrorCallback(ADC_HandleTypeDef*) {
-    board.gate_off();
-    channels.asynchronous_fault.store(static_cast<std::uint32_t>(roller::drive::Fault::configuration));
-}
-extern "C" void HAL_GPIO_EXTI_Callback(std::uint16_t pin) {
-    if (pin == DRV_FAULT_Pin) {
-        board.fault_irq();
-    }
+extern "C" void HAL_ADC_ErrorCallback(ADC_HandleTypeDef* adc) {
+    // Report and allow the overwritten-data DMA stream to recover next cycle.
+    roller_hardware.adc_errors = roller_hardware.adc_errors + 1;
+    __HAL_ADC_CLEAR_FLAG(adc, ADC_FLAG_OVR | ADC_FLAG_JQOVF);
 }
 extern "C" void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef*, std::uint32_t flags) {
     if (flags & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) {
-        board.gate_off();
-        channels.asynchronous_fault.store(static_cast<std::uint32_t>(roller::drive::Fault::communication));
+        channels.communication_errors.fetch_add(1);
     }
     if (flags & FDCAN_IT_RX_FIFO0_NEW_MESSAGE) {
         board.can_irq();
@@ -153,8 +132,7 @@ extern "C" void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef*, std::uint32_t fl
 }
 extern "C" void HAL_FDCAN_ErrorStatusCallback(FDCAN_HandleTypeDef*, std::uint32_t flags) {
     if (flags & FDCAN_IT_BUS_OFF) {
-        board.gate_off();
-        channels.asynchronous_fault.store(static_cast<std::uint32_t>(roller::drive::Fault::communication));
+        channels.communication_errors.fetch_add(1);
     }
 }
 extern "C" void vApplicationGetIdleTaskMemory(StaticTask_t** task, StackType_t** stack,
@@ -192,6 +170,18 @@ extern "C" void roller_app_start() {
                         node.receive(frame);
                     }
 #endif
+                    const auto request = roller_hardware_request;
+                    if (request != roller_hardware_ack) {
+                        const auto mask = __get_PRIMASK();
+                        __disable_irq();
+                        std::memcpy(
+                            &roller_hardware_snapshot,
+                            const_cast<const roller::platform::HardwareDiagnostics*>(&roller_hardware),
+                            sizeof(roller_hardware_snapshot));
+                        __DMB();
+                        roller_hardware_ack = request;
+                        __set_PRIMASK(mask);
+                    }
                     const auto now = DWT->CYCCNT;
                     node.process((now - previous) / (SystemCoreClock / 1000000U));
 #ifdef ROLLER_BENCH
@@ -218,7 +208,10 @@ extern "C" void roller_app_start() {
                     const auto samples = channels.sample_count.load(std::memory_order_relaxed);
                     const auto can = channels.can_task_ticks.load(std::memory_order_relaxed);
                     const auto epoch = channels.sampling_epoch.load(std::memory_order_acquire);
-                    if (!progress.observe(samples, can, epoch) || channels.inhibit.load()) {
+                    static unsigned stalled{};
+                    const bool progressing = progress.observe(samples, can, epoch);
+                    stalled = progressing ? 0U : stalled + 1U;
+                    if (stalled >= 20 || channels.inhibit.load()) {
                         channels.inhibit.store(true);
                         board.gate_off();
                         channels.asynchronous_fault.store(
@@ -226,10 +219,10 @@ extern "C" void roller_app_start() {
                     } else if (HAL_IWDG_Refresh(&hiwdg) != HAL_OK) {
                         roller_panic("watchdog refresh");
                     }
-                    if (HAL_GPIO_ReadPin(USER_BUTTON_GPIO_Port, USER_BUTTON_Pin) == GPIO_PIN_RESET) {
-                        board.gate_off();
-                        channels.asynchronous_fault.store(
-                            static_cast<std::uint32_t>(roller::drive::Fault::driver));
+                    static unsigned led_ticks{};
+                    if (++led_ticks == 50) {
+                        led_ticks = 0;
+                        HAL_GPIO_TogglePin(STATUS_LED_GPIO_Port, STATUS_LED_Pin);
                     }
                     roller_debug.sample_count = samples;
                     roller_debug.max_isr_cycles = channels.isr_max_cycles.load();

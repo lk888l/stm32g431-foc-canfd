@@ -1,73 +1,65 @@
-# 硬件约定
+# simple-foc v2.0 硬件约定
 
-目标板：Unit-RollerCAN V1.0，MCU STM32G431CBU6（128 KiB Flash / 32 KiB SRAM）。这里的引脚与板级电路来自原理图，并交叉检查本地 `m5-rollercan` 的引脚定义；没有沿用其电机控制或通信逻辑。
+依据用户 NAS 的 `stm32G431CBU6无刷电机控制.md`、`v2.0/simple-foc-v2.0.jpeg`、DRV8316C / MT6701 数据手册和 `4015_1.png`、`4015_2.png`。原始 NAS 资料不复制到仓库。旧 Unit-RollerCAN 引脚和比例不再适用。
 
 ## 引脚
 
-| 功能 | 引脚 | 配置 / 语义 |
+| 信号 | MCU | 配置 |
 |---|---|---|
-| 相 A PWM | **PA10 / TIM1_CH3** | DRV8311 INA |
-| 相 B PWM | **PA9 / TIM1_CH2** | DRV8311 INB |
-| 相 C PWM | **PA8 / TIM1_CH1** | DRV8311 INC；不能按 CH1=A 接线 |
-| 三相桥使能 | PB2 | 三个 INL 共用；低电平使桥为高阻 |
-| 驱动唤醒 | PB1 | nSLEEP；高电平唤醒 |
-| 驱动故障 | PB0 / EXTI0 | nFAULT，低有效，中断优先级 1 |
-| 相 A/B/C 电流 | PA1 / PA2 / PA3 | ADC1_IN2 / IN3 / IN4，规则组 rank 1/2/3，经 DMA 采集 |
-| 母线电压 | PA0 | ADC1_IN1，规则组 rank 4，经 DMA 采集 |
-| 编码器 CS | PA4 | 低有效 GPIO，空闲高 |
-| 编码器时钟 | PA5 / SPI1_SCK | 5 MHz，CPOL=0、CPHA=1 |
-| 编码器 DATA 读 | PA6 / SPI1_MISO | SSC 共享 DATA 线 |
-| 编码器 DATA 写 | PA7 / SPI1_MOSI | 经 2.2 kΩ 接 DATA，读阶段改成输入高阻 |
-| CAN RX/TX | PA11 / PA12 | FDCAN1，默认仲裁段 1 Mbit/s、FD 数据段 5 Mbit/s |
-| CAN 收发器待机 | PB4 | 高电平待机，启动 CAN 后拉低 |
-| 用户按钮 | PC6 | 低有效，按下关桥并触发故障 |
-| SWD | PA13 / PA14 | 保留调试接口 |
+| A/B/C PWM | PA8 / PA9 / PA10 | TIM1 CH1 / CH2 / CH3，AF6 |
+| A 相电流 | PA0 | ADC1 IN1，rank 1 |
+| B 相电流 | PA1 | ADC2 IN2，rank 1，与 A 同步 |
+| C 相电流 | PB0 | ADC1 IN15，rank 2 |
+| 母线 | PC4 | ADC2 IN5，rank 2/3 |
+| NTC | PB1 | ADC1 IN12，rank 3；仅提供原始值 |
+| MT6701 CS / CLK / DO | PA15 / PC10 / PC11 | GPIO / SPI3 SCK / SPI3 MISO，AF6 |
+| SPI3 MOSI | PB5 | AF6，发送占位字节；不接 MT6701 |
+| CAN RX / TX | PB8 / PB9 | FDCAN1 AF9；PB8 兼 BOOT0 |
+| nSLEEP | PB10 | 低睡眠，高唤醒；已由用户确认接线 |
+| LED | PC6 | 500 ms 翻转一次 |
+| 调试串口预留 | PA2 / PA3 | 尚未启动 USART2 |
+| USB 预留 | PA11 / PA12 | 不配置 CAN，不启用 USB 协议栈 |
+| SWD | PA13 / PA14 | 保留 |
 
-板上没有外部晶振，使用 HSI + PLL 得到 160 MHz。I²C、OLED、RGB 相关引脚没有应用驱动，未使用的引脚由 CubeMX 设为模拟输入。
+没有使用 PB2 使能、PB0 nFAULT、PB4 CAN standby 或 PC6 按键。nFAULT 未接 MCU，无法通过该引脚读取驱动器故障；DRV8316C 内部保护仍独立有效。NTC 型号、B 值、分压参数未知，不将 PB1 原始值伪装成温度；`0x2100:09` 仍为 MCU 内部温度。
 
-## 功率级与采样
+## 驱动板与换算
 
-DRV8311H 的 MODE 悬空，使用 **3PWM**；GAIN 悬空（R11 未装），电流输出尺度为 **1 V/A**。母线分压 **R18=12 kΩ、R19=2.2 kΩ，比例 71/11≈6.454545**。
+DRV8316CT 的 MODE 经 47 kΩ 接 AVDD，3PWM；INLA/B/C 接高、DRVOFF 接地。GAIN 接地，增益 **0.15 V/A**，输出零点为 VREF/2。SLEW 接 AVDD，200 V/µs 设置；OCP/SR 接地，约 16 A OCP，非本电机额定电流限值。母线分压 R_DV1=47 kΩ、R_DV2=4.7 kΩ，比例 **11**，不能照信号名 `0.1_VCC` 误用 10。
 
-```text
-I_phase[A] = (current_adc - offset_adc) × VDDA / 4095 / (1 V/A)
-Vbus[V]   = bus_adc × VDDA / 4095 × (12000 + 2200) / 2200
+```
+Iphase = (ADC - zero) × VDDA / 4095 / 0.15
+Vbus   = ADCbus × VDDA / 4095 × 11
 ```
 
-上电保持 PB2 低，采集 1024 个样本确定三个零点，约 51.2 ms。零点必须在 1700–2400 count 内，峰峰值不超过 100 count；超出后锁存配置故障。VDDA 由 VREFINT 工厂校准值计算，并周期更新。实机静止正 α 电压矢量下，A 相 ADC 高于零点、B/C 低于零点，确认以上电流方向；正负 Iq 跟踪进一步验证了闭环符号。电流增益的绝对精度仍需外部电流表校验。
+VDDA 使用内部 VREFINT 工厂校准值，每 100 ms 更新。正常运行构建先唤醒驱动、保持三个 PWM 输出未连接，采集 1024 帧零点；异常零点会重采，不锁存配置故障。Bringup 始终睡眠，不执行 CSA 零点标定。
 
-TIM1 为 20 kHz 中心对齐 PWM，使用 `CENTERALIGNED1`，ARR=4000、PSC=0、RCR=1。每次自然下溢产生一个周期边界，`TIM1_UP_TIM16` 中断以优先级 2 启动本周期 SSC 编码器 DMA；首次编码器事务在 PWM 定时器启动前准备。CH4 是内部 PWM2 比较输出，不占外部引脚，CCR4=3680，OC4REF 上升沿触发 ADC1 规则组的四通道序列。ADC 使用 PCLK/4=40 MHz，四路各采样 24.5 周期、转换 12.5 周期。DMA1_Channel1 将每次扫描搬入两个完整帧组成的循环缓冲区，半满/全满回调只消费当前稳定的半区。
+DRV8316C 推荐工作母线最高 35 V。电机资料中的最高 40 V 是电机规格，不是驱动板的允许工作电压。软件电压异常标志不代替芯片内部 UVLO/OVP。
 
-占空比限于 10%–90%。极限 90% 时，三个低侧同时导通的窗口约为周期内 22.5–27.5 µs；触发点约 23.0 µs，第三相采样保持结束约 25.46 µs，四路转换完成约 26.7 µs。这个计算为驱动传播和模拟建立留下余量，实际仍应示波器确认。更改 PWM 频率、占空比限制、ADC 时钟或采样时间时必须一起重新计算。
+## PWM 和同步采样
 
-温度和 VREFINT 使用 ADC1 软件触发的两路注入序列，每 2000 个快速帧执行一次，采样时间 247.5 周期。该慢序列在快速扫描完成后启动，随后帧读取结果，不延后电流 DMA 的帧完成通知。注入组的 JDR 没有原生 DMA 请求，保留 CPU 读取与超时检查。
+TIM1 中心对齐，160 MHz / (2 × 4000) = 20 kHz，RCR=1，自然下溢为周期起点。CH4 PWM2、CCR4=3920，在起点后 **24.5 µs** 上升，触发 ADC1/ADC2 规则组双 ADC 同步模式。每 ADC 三个 rank，40 MHz、24.5 周期采样 + 12.5 周期转换，每 rank 0.925 µs；DMA 帧约 **27.275 µs** 完成。
 
-SVPWM 输出通过 DMA1_Channel4 和 TIM1 COM 请求进行 DMAR burst，缓冲区按 C/B/A 排列，只更新 CCR1–3 的预装载值；CCR4 不参与 burst。软件 COM 事件将三路占空比写入预装载寄存器，由后续自然 update 锁存。功率输出前最多等待 320 个 DWT 周期确认三字 burst 完成，并复查 nFAULT、异步故障和 inhibit 后才允许拉高 PB2。
+DMA1 Channel1 从公共 CDR 读 32 位：低 16 位 ADC1、高 16 位 ADC2。缓冲区为两帧，每帧三字；A/B 同步，C 比 A/B 晚 0.925 µs。半满/全满回调只消费稳定半区。内部温度/VREF 使用 ADC1 注入组在快速帧后采集。
 
-PB2 是最终关桥手段。驱动内部完成 MOSFET 死区，本板不是六路互补 PWM 接法；TIM1 BKIN 未接 nFAULT，因此不能声称 MCU 具有由 BKIN 实现的硬件周期限流。nFAULT 依靠 DRV8311 自身保护以及 EXTI 软件快速关桥。
+低侧检测不能在上管导通时测到该相。`current_window.hpp` 根据锁存到本周期的实际 CCR 值、ADC 采样孔径、1.05 µs 最大传播延迟、1 µs 典型 CSA 建立时间和 0.15 µs 余量逐相判断。A/B 的比较值须小于 3568，C 小于 3716；ADC 饱和或 overrun 的相不参与反馈。建立时间为手册典型值，带电后仍需示波器确认。
 
-## 编码器
+三相有效时消除共模；两相有效时由 `ia+ib+ic=0` 重建第三相；仅一相或没有有效相时，使用先前电流、实际锁存电压、估算反电势和 R/L 模型预测。这样保留完整 `Vbus/√3` 线性电压范围，并用诊断明确区分测量和估计。近饱和电流精度取决于模型，不能声称全占空比都能直接测得三相。
 
-SSC 按 TLI5012B E1000 处理：16 位 SPI word、模式 1、5 MHz。命令 `0x8021` 读取角度，再读 safety word；15 位角度换算为弧度。使用 CRC-8，poly=0x1D、init=0xFF、xorout=0xFF，覆盖命令和角度的高字节优先序列；同时检查状态位及全 1 断线值。
+PWM 不再为三字传输启动 DMA。临界区内检查 TIM1 正在下数、CNT≥320、无待处理 update，再以 UDIS 包住 CCR1/2/3 三次预装载写入。太晚的整组延后，保持原三相；下溢锁存新值后才首次连接输出。固定 2 µs 提交余量与 27.275 µs 后的可用时间配套，不再采用事后 45 µs 关桥阈值。
 
-SSC 命令一字和应答两字分别通过 SPI1 TX/RX DMA 搬运，RX 使用 DMA1_Channel2，TX 使用 Channel3。命令接收完成中断先有界确认 SPI BSY 清除，再将 PA7 转输入、经 PA6 接收应答；最终应答完成后恢复 PA7 AF。DATA turnaround 为 200 ns，满足手册的 130 ns 最小值；保留 CS setup 和下一帧间隔。CRC 使用编译期生成的 256 字节查表，仍完整检查命令、角度和状态。
+## MT6701
 
-每个 PWM 周期起点先启动异步 SSC 事务，ADC 在约 23 µs 才开始采集相电流，约 26.7 µs 完成四路扫描。ADC DMA 中断准备电流与低频采样数据，并与同周期编码器结果汇合；编码器已完成时直接执行本帧控制，否则由最终 SPI RX DMA 完成中断继续。角度采样早于电流采样，当前没有角度外推，二者不是同时采样。
+SPI3 mode 1（CPOL=0，下降沿采样）、8 位数据、5 MHz，CS 下连续收三字节，即 24 个时钟；没有 TLI5012 命令、safety word 或 DATA 换向。帧为 14 位角度 + 4 位状态 + 6 位 CRC，CRC 多项式 x⁶+x+1，初值 0，不反射、不异或输出。
 
-传输错误、BSY 超时或下一周期触发时前一事务仍未完成或消费，都会关桥并进入故障，不沿用旧周期角度。启动及显式故障复位时读 `0x8001` STAT 应答编码器的复位标志，之后的角度读取仍必须通过 CRC；启动检查对异步 DMA 结果设总超时。
+状态 Mg[1:0] 表示正常/过强/过弱，Mg[2] PUSH，Mg[3] 超速。状态用于诊断；CRC 错误丢弃该角度，控制器从上一有效角度和速度外推，不单帧失能。下个有效角度按实际缺失周期数更新速度，避免把恢复后的正常角度误当跳变。超过一秒连续缺失后，当前实现冻结外推年龄，不能用于长时间传感器失联下的可靠换相。
 
-角度为单圈绝对值；运行时软件展开多圈，掉电后不能恢复先前圈数。编码器跳变故障复位只恢复到当前可测角度，丢失的完整圈数无法推断，位置主站需重新建立位置参考。
+传感器内部延迟按 5 µs 估算。Park 使用约 30 µs 预测角，逆 Park 使用下个 PWM 周期中心约 80 µs 预测角。角度滤波/速度仍含动态滞后，这不是完成了实测时延辨识的声明。
 
-## 限值与待标定项
+## 4015 电机
 
-软件默认电流目标上限 0.25 A，参数最多 0.5 A；瞬时相电流故障阈值 0.75 A。母线允许 4.5–16 V，MCU 内部温度达到 85°C 关桥。电流传感器并不等于母线电流测量；MCU 内温不等于电机或驱动芯片温度。
+24N22P、11 极对、Delta，额定 24 V、1.4 A，资料给出 5.4 Ω 相电阻、3.6 Ω 线电阻、1.3 mH 相电感、Kt=0.23 Nm/A。控制模型初值使用等效星形线电流参数 R=1.8 Ω、L=1.3 mH/3；L 的测量定义和 Kt 的峰值/RMS 约定尚未实测确认。默认电流目标限值为 1.4 A，配置上限 4.9 A，不表示 4.9 A 可以持续运行。
 
-电机按产品资料的 3504 / 200 KV 配置。`Kt=60/(2π×200)≈0.04775 Nm/A` 只是 KV 换算估值，不能视为测得的轴端转矩系数。极对数默认候选 7，但 `calibrated=false`，必须运行校准。校准不负责辨识电阻、电感、惯量或速度环增益。
+电流 PI 按 500 Hz 设计初值 `Kp=L·2π·500`、`Ki=R·2π·500`，带矢量饱和抗积分饱和。实际电流带宽、机械环参数和带载温升尚未验证。
 
-## 资料
-
-- [M5Stack Unit-RollerCAN](https://docs.m5stack.com/en/unit/Unit-RollerCAN)：模块与电机规格。
-- [TLI5012B E1000 数据手册](https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/docs/products/unit/Unit-Roller485/TLI5012BE1000.pdf)：SSC、电气时序和 safety word。
-- [DRV8311H 数据手册](https://m5stack.oss-cn-shenzhen.aliyuncs.com/resource/docs/products/unit/Unit-Roller485/DRV8311HRRWR.pdf)：3PWM 模式及 CSA。
-- 用户提供的 `sch_Unit-RollerCAN_V1.0.pdf`，第 1 页：相序、共用 INL、GAIN/MODE、ADC 分压、DATA 电阻连接。
-- 用户提供的 `Unit-RollerCAN-CAN-Protocol-CN.pdf`：用于确认原厂私有协议与本项目 CANopen 的区别。原始 NAS 文档不重新分发到开源仓库。
+电角校准只在显式请求时执行：0.5 s 对齐，正向四个电周 3 s、反向四个电周 3 s、0.5 s 停稳。固定使用已知极对数；每 0.5 s 检查分段位移，并检查正反返程闭合与偏置圆周集中度。偏置由双向多点平均获得，不再用端点位移猜另一个合法极对数。本次未执行这项会转动电机的操作。

@@ -158,6 +158,29 @@ class BenchCommandsTest(unittest.TestCase):
                     stlink_bench.main(["--output", str(output), "torque", "100"])
             self.assertEqual(json.loads(output.read_text(encoding="utf8")), [{"fault": 0x8130}])
 
+    def test_stop_failure_halts_before_disabling_power(self):
+        bench = stlink_bench.Bench.__new__(stlink_bench.Bench)
+        halted = False
+        registers = {0x48000418: 0, 0x40012C20: 0x1111}
+        def command(value):
+            nonlocal halted
+            self.assertEqual(value, "halt")
+            halted = True
+        def write(address, values):
+            # A running ISR can undo a raw nSLEEP write; the fallback must
+            # first remove that race and preserve the ADC trigger channel.
+            self.assertTrue(halted)
+            registers[address] = values[0]
+        with patch.object(bench, "nmt", side_effect=TimeoutError("NMT failed")), \
+             patch.object(bench, "command", side_effect=command), \
+             patch.object(bench, "write", side_effect=write), \
+             patch.object(bench, "read", side_effect=lambda address, _: [registers[address]]):
+            with self.assertRaisesRegex(TimeoutError, "NMT failed"):
+                bench.stop()
+        self.assertTrue(halted)
+        self.assertEqual(registers[0x48000418], 1 << (10 + 16))
+        self.assertEqual(registers[0x40012C20], 0x1000)
+
     def test_snapshot_waits_for_new_sequence_before_bulk_read(self):
         bench = stlink_bench.Bench.__new__(stlink_bench.Bench)
         bench.state, bench.request = 0x20000000, 0x20000100

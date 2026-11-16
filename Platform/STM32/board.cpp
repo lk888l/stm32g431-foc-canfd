@@ -5,116 +5,143 @@
 #include "fdcan.h"
 #include "fdcan_timing.hpp"
 #include "main.h"
-#include "pwm_dma.hpp"
+#include "pwm.hpp"
+#include "roller/drivers/current_window.hpp"
 #include "roller/drivers/rollercan_sensing.hpp"
 #include "spi.h"
 #include "stm32g4xx_ll_adc.h"
 #include "tim.h"
 #include <algorithm>
 #include <cmath>
-#include <cstring>
 #ifdef ROLLER_BENCH
 #include "bench.hpp"
 #endif
-
+extern "C" {
+volatile roller::platform::HardwareDiagnostics roller_hardware;
+roller::platform::HardwareDiagnostics roller_hardware_snapshot;
+volatile std::uint32_t roller_hardware_request{}, roller_hardware_ack{};
+extern std::uint32_t roller_pwm_deferred;
+}
 namespace roller::platform {
+#ifdef ROLLER_NO_MOTION
 namespace {
-constexpr std::uint32_t cpu_hz = 160000000;
+bool can_loopback_test() noexcept {
+    // Internal loopback: checks message RAM, FIFO and FD/BRS without bus traffic.
+    const auto original_mode = hfdcan1.Init.Mode;
+    hfdcan1.Init.Mode = FDCAN_MODE_INTERNAL_LOOPBACK;
+    FDCAN_FilterTypeDef filter{};
+    filter.IdType = FDCAN_STANDARD_ID;
+    filter.FilterType = FDCAN_FILTER_MASK;
+    filter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+    filter.FilterID1 = 0x123;
+    filter.FilterID2 = 0x7FF;
+    bool ok = HAL_FDCAN_Init(&hfdcan1) == HAL_OK && HAL_FDCAN_ConfigFilter(&hfdcan1, &filter) == HAL_OK &&
+              HAL_FDCAN_Start(&hfdcan1) == HAL_OK;
+    FDCAN_TxHeaderTypeDef tx{};
+    tx.Identifier = 0x123;
+    tx.IdType = FDCAN_STANDARD_ID;
+    tx.TxFrameType = FDCAN_DATA_FRAME;
+    tx.DataLength = FDCAN_DLC_BYTES_64;
+    tx.FDFormat = FDCAN_FD_CAN;
+    tx.BitRateSwitch = FDCAN_BRS_ON;
+    std::array<std::uint8_t, 64> data{}, received{};
+    for (unsigned i = 0; i < data.size(); ++i) {
+        data[i] = static_cast<std::uint8_t>(i ^ 0xA5U);
+    }
+    if (ok) {
+        ok = HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &tx, data.data()) == HAL_OK;
+    }
+    const auto start = DWT->CYCCNT;
+    while (ok && HAL_FDCAN_GetRxFifoFillLevel(&hfdcan1, FDCAN_RX_FIFO0) == 0) {
+        if (DWT->CYCCNT - start > 1600000) {
+            ok = false;
+        }
+    }
+    FDCAN_RxHeaderTypeDef rx{};
+    if (ok) {
+        ok = HAL_FDCAN_GetRxMessage(&hfdcan1, FDCAN_RX_FIFO0, &rx, received.data()) == HAL_OK &&
+             rx.Identifier == 0x123 && rx.FDFormat == FDCAN_FD_CAN && rx.BitRateSwitch == FDCAN_BRS_ON &&
+             rx.DataLength == FDCAN_DLC_BYTES_64 && data == received;
+    }
+    (void)HAL_FDCAN_Stop(&hfdcan1);
+    hfdcan1.Init.Mode = original_mode;
+    (void)HAL_FDCAN_Init(&hfdcan1);
+    return ok;
+}
 } // namespace
+#endif
 Board* Board::encoder_owner_{};
 void Board::gate_off() noexcept {
-    // PB2 disables all three DRV8311 half bridges independently of timer/MOE.
-    GPIOB->BSRR = static_cast<std::uint32_t>(GPIO_PIN_2) << 16;
+    DRV_ENABLE_GPIO_Port->BSRR = static_cast<std::uint32_t>(DRV_ENABLE_Pin) << 16;
+    CLEAR_BIT(TIM1->CCER, TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E);
     __DMB();
 }
 Result Board::on_start() noexcept {
     gate_off();
-    // Stream sequential hot-path instructions across the four Flash wait
-    // states; keep the instruction cache available for branches.
     __HAL_FLASH_PREFETCH_BUFFER_ENABLE();
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0;
     DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-    encoder_owner_ = this;
-    if (!initialize_cordic() || !initialize_pwm_dma() || !encoder_.initialize()) {
-        return std::unexpected(Error::hardware);
-    }
 #ifdef DEBUG
     __HAL_DBGMCU_FREEZE_IWDG();
 #endif
-    if (SystemCoreClock != cpu_hz || htim1.Init.Period != 4000 || hspi1.Init.DataSize != SPI_DATASIZE_16BIT ||
-        hfdcan1.Init.FrameFormat != FDCAN_FRAME_FD_BRS) {
+    encoder_owner_ = this;
+    if (!initialize_cordic() || !encoder_.initialize()) {
+        return std::unexpected(Error::hardware);
+    }
+    if (SystemCoreClock != 160000000 || htim1.Init.Period != 4000) {
         return std::unexpected(Error::configuration);
     }
     if (HAL_TIM_Base_Start(&htim7) != HAL_OK) {
         return std::unexpected(Error::hardware);
     }
+    if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK ||
+        HAL_ADCEx_Calibration_Start(&hadc2, ADC_SINGLE_ENDED) != HAL_OK) {
+        return std::unexpected(Error::hardware);
+    }
+#ifdef ROLLER_NO_MOTION
+    roller_hardware.no_motion = 1;
+    roller_hardware.can_loopback = can_loopback_test() ? 1U : 2U;
+#else
+    // Wake only for current-zero acquisition; CH1-3 remain disconnected, all INH low.
     HAL_GPIO_WritePin(DRV_ENABLE_GPIO_Port, DRV_ENABLE_Pin, GPIO_PIN_SET);
-    HAL_Delay(5); // DRV wake and CSA settling, with half bridges disabled.
-    if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) {
-        return std::unexpected(Error::hardware);
-    }
-    // Injected conversions have no native DMA request. Only slow internal
-    // channels use them; all four fast external channels use regular DMA.
-    if (HAL_ADCEx_InjectedStart(&hadc1) != HAL_OK) {
-        return std::unexpected(Error::hardware);
-    }
-    housekeeping_pending_ = true;
-    const auto begin = DWT->CYCCNT;
-    while (!__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_JEOS)) {
-        if (DWT->CYCCNT - begin > 800000) {
-            return std::unexpected(Error::timeout);
-        }
-    }
-    const auto sensing_ok = housekeeping();
-    (void)HAL_ADCEx_InjectedStop(&hadc1);
-    // Startup reads also transfer with DMA; only this pre-RTOS path waits.
-    if (!sensing_ok || !read_encoder(0x8001) || !read_encoder(0x8021)) {
-        return std::unexpected(Error::hardware);
-    }
+#endif
+    HAL_Delay(40); // MT6701 power-up maximum 32 ms; no motor actuation.
     return {};
 }
 Result Board::on_stop() noexcept {
     stop_sampling();
-    gate_off();
-    HAL_GPIO_WritePin(DRV_ENABLE_GPIO_Port, DRV_ENABLE_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(CAN_STB_GPIO_Port, CAN_STB_Pin, GPIO_PIN_SET);
     return {};
 }
 Result Board::start_sampling() noexcept {
-    gate_off();
 #ifdef ROLLER_BENCH
     bench::sampling_restart();
 #endif
-    if (!start_pwm_dma()) {
-        stop_sampling();
+    if (!start_pwm()) {
         return std::unexpected(Error::hardware);
     }
+    TIM1->CCR1 = 0;
+    TIM1->CCR2 = 0;
+    TIM1->CCR3 = 0;
+    active_duty_ = {};
+    pending_duty_ = {};
+    duty_pending_ = false;
     __HAL_TIM_SET_COUNTER(&htim1, 0);
     (void)HAL_TIM_GenerateEvent(&htim1, TIM_EVENTSOURCE_UPDATE);
-    housekeeping_pending_ = false;
-    housekeeping_ok_ = true;
-    sample_pending_ = false;
-    reset_frame_ = false;
-    encoder_cycle_started_ = false;
     __HAL_TIM_CLEAR_IT(&htim1, TIM_IT_UPDATE);
     HAL_NVIC_ClearPendingIRQ(TIM1_UP_TIM16_IRQn);
-    if (HAL_ADC_Start_DMA(&hadc1, reinterpret_cast<std::uint32_t*>(adc_dma_.data()),
-                          static_cast<std::uint32_t>(adc_dma_.size())) != HAL_OK) {
+    if (HAL_ADC_Start(&hadc2) != HAL_OK ||
+        HAL_ADCEx_MultiModeStart_DMA(&hadc1, adc_dma_.data(), 6) != HAL_OK) {
         stop_sampling();
         return std::unexpected(Error::hardware);
     }
-    // DMA is armed before the timer can produce the first sampling trigger.
     sampling_.store(true, std::memory_order_release);
-    // Prime the first encoder frame before the timer's first natural update.
     encoder_trigger();
     __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
-    for (auto channel : {TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_3, TIM_CHANNEL_4}) {
-        const auto result = HAL_TIM_PWM_Start(&htim1, channel);
-        if (result != HAL_OK) {
-            stop_sampling();
-            return std::unexpected(Error::hardware);
-        }
+    // CH4 drives only the ADC trigger. CH1-3 are enabled only by apply().
+    if (HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_4) != HAL_OK) {
+        stop_sampling();
+        return std::unexpected(Error::hardware);
     }
     channels_.sampling_epoch.fetch_add(1, std::memory_order_release);
     return {};
@@ -122,241 +149,216 @@ Result Board::start_sampling() noexcept {
 void Board::stop_sampling() noexcept {
     gate_off();
     sampling_.store(false, std::memory_order_release);
-    // Prevent a partially completed ADC/SPI callback from resuming on restart.
     const auto irq = __get_PRIMASK();
     __disable_irq();
     __HAL_TIM_DISABLE_IT(&htim1, TIM_IT_UPDATE);
-    for (auto channel : {TIM_CHANNEL_1, TIM_CHANNEL_2, TIM_CHANNEL_3, TIM_CHANNEL_4}) {
-        (void)HAL_TIM_PWM_Stop(&htim1, channel);
-    }
-    sample_pending_ = false;
-    encoder_cycle_started_ = false;
+    (void)HAL_TIM_PWM_Stop(&htim1, TIM_CHANNEL_4);
     encoder_.abort();
-    stop_pwm_dma();
-    HAL_NVIC_DisableIRQ(DMA1_Channel1_IRQn);
-    HAL_NVIC_DisableIRQ(ADC1_2_IRQn);
+    stop_pwm();
     __set_PRIMASK(irq);
-    // HAL ADC stop timeouts require the low-priority HAL tick to run.
-    (void)HAL_ADC_Stop_DMA(&hadc1);
+    (void)HAL_ADCEx_MultiModeStop_DMA(&hadc1);
+    (void)HAL_ADC_Stop(&hadc2);
     (void)HAL_ADCEx_InjectedStop(&hadc1);
-    HAL_NVIC_ClearPendingIRQ(DMA1_Channel1_IRQn);
-    HAL_NVIC_ClearPendingIRQ(ADC1_2_IRQn);
-    HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
-    HAL_NVIC_EnableIRQ(ADC1_2_IRQn);
+    housekeeping_pending_ = false;
 }
-bool Board::read_encoder(std::uint16_t command) noexcept {
-    reading_status_ = command == 0x8001;
-    encoder_finished_.store(false, std::memory_order_relaxed);
-    if (!encoder_.start(command, encoder_complete)) {
-        return false;
-    }
-    const auto start = DWT->CYCCNT;
-    while (!encoder_finished_.load(std::memory_order_acquire)) {
-        if (DWT->CYCCNT - start > 16000) {
-            encoder_.abort();
-            return false;
-        }
-    }
-    return encoder_ok_;
-}
-void Board::encoder_complete(std::uint16_t value, std::uint16_t safety, bool ok) noexcept {
+void Board::encoder_complete(std::uint32_t frame, bool ok) noexcept {
     auto& self = *encoder_owner_;
-    if (self.acknowledging_) {
-        self.acknowledging_ = false;
-        if (ok && self.encoder_.start(0x8021, encoder_complete)) {
-            return;
-        }
-        ok = false;
+    const auto decoded = drivers::decode_mt6701(frame);
+    self.encoder_ok_ = ok && decoded.has_value();
+    roller_hardware.encoder_raw = frame;
+    if (self.encoder_ok_) {
+        self.encoder_angle_ = decoded->angle;
+        roller_hardware.encoder_status = decoded->status;
+        roller_hardware.encoder_frames = roller_hardware.encoder_frames + 1;
+    } else {
+        roller_hardware.encoder_errors = roller_hardware.encoder_errors + 1;
     }
-    const auto decoded = drivers::decode_angle(value, safety);
-    // A STAT read at startup only acknowledges reset; the subsequent angle
-    // transaction still checks the full angle CRC and safety/status word.
-    self.encoder_ok_ = ok && (self.reading_status_ || decoded.has_value());
-    self.encoder_angle_ = decoded.value_or(0);
-    self.encoder_finished_.store(true, std::memory_order_release);
-    if (self.sample_pending_) {
-        self.sample_pending_ = false;
-        self.sample_ready_();
-    }
-}
-void Board::acknowledge_encoder() noexcept {
-    gate_off();
-    acknowledge_requested_ = true;
 }
 void Board::encoder_trigger() noexcept {
     if (!sampling()) {
         return;
     }
-    if (sample_pending_ || encoder_.busy() || encoder_cycle_started_) {
-        gate_off();
-        sample_pending_ = false;
+    if (duty_pending_) {
+        active_duty_ = pending_duty_;
+        duty_pending_ = false;
+#ifndef ROLLER_NO_MOTION
+        if (enable_pending_ && !channels_.inhibit.load(std::memory_order_acquire)) {
+            SET_BIT(TIM1->CCER, TIM_CCER_CC1E | TIM_CCER_CC2E | TIM_CCER_CC3E);
+        }
+#endif
+        enable_pending_ = false;
+    }
+    if (encoder_.busy()) {
         encoder_.abort();
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::timing));
+        roller_hardware.missed_frames = roller_hardware.missed_frames + 1;
     }
-    reading_status_ = false;
     encoder_ok_ = false;
-    encoder_finished_.store(false, std::memory_order_relaxed);
-    acknowledging_ = acknowledge_requested_;
-    reset_frame_ = acknowledging_;
-    acknowledge_requested_ = false;
-    encoder_cycle_started_ = true;
-    if (!encoder_.start(acknowledging_ ? 0x8001 : 0x8021, encoder_complete)) {
-        gate_off();
-        encoder_finished_.store(true, std::memory_order_release);
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::timing));
-    }
+    (void)encoder_.start(encoder_complete);
 }
 bool Board::begin_sample(unsigned half, void (*ready)()) noexcept {
-    const auto remaining = DMA1_Channel1->CNDTR;
-    // Only consume a complete half while DMA owns the other half. A delayed
-    // IRQ must never mix ranks from two PWM periods.
-    const bool stable = half == 0 ? remaining > 0 && remaining <= 4 : remaining == 0 || remaining > 4;
-    if (!stable || sample_pending_ || !encoder_cycle_started_) {
-        gate_off();
-        sample_pending_ = false;
-        encoder_.abort();
-        encoder_ok_ = false;
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::timing));
+    const auto stable = [half](std::uint32_t n) { return half == 0 ? n > 0 && n <= 3 : n == 0 || n > 3; };
+    if (!stable(DMA1_Channel1->CNDTR)) {
+        roller_hardware.missed_frames = roller_hardware.missed_frames + 1;
+        return false; // Keep the previous output; never consume a torn frame.
+    }
+    const volatile auto* source = adc_dma_.data() + half * 3;
+    __DMB();
+    const std::uint32_t ab = source[0], cv = source[1], nv = source[2];
+    __DMB();
+    if (!stable(DMA1_Channel1->CNDTR)) {
         return false;
     }
-    encoder_cycle_started_ = false;
-    __DMB();
-    const volatile auto* source = adc_dma_.data() + half * 4;
-    adc_frame_ = {source[0], source[1], source[2], source[3]};
-    __DMB();
-    const auto after_copy = DMA1_Channel1->CNDTR;
-    if (half == 0 ? !(after_copy > 0 && after_copy <= 4) : !(after_copy == 0 || after_copy > 4)) {
-        gate_off();
-        encoder_ok_ = false;
-        return false;
-    }
-    sample_ready_ = ready;
-    sample_pending_ = true;
-    // Prepare ADC-derived values while the SSC transaction runs. Equal IRQ
-    // priorities keep completion from consuming a partially prepared sample.
-    housekeeping_ok_ = housekeeping();
+    adc_frame_ = {static_cast<std::uint16_t>(ab), static_cast<std::uint16_t>(ab >> 16),
+                  static_cast<std::uint16_t>(cv), static_cast<std::uint16_t>(cv >> 16),
+                  static_cast<std::uint16_t>(nv)};
+    (void)housekeeping();
     prepared_sample_ = current_sample();
-    if (encoder_finished_.load(std::memory_order_acquire)) {
-        sample_pending_ = false;
-        ready();
-    }
+    ready();
     return true;
 }
 drive::Sample Board::sample() noexcept {
-    auto result = prepared_sample_;
-    result.encoder_ok = encoder_ok_;
-    result.angle = encoder_angle_;
-    result.driver_ok = (GPIOB->IDR & DRV_FAULT_Pin) != 0;
-    result.adc_ok = result.adc_ok && !(ADC1->ISR & (ADC_ISR_OVR | ADC_ISR_JQOVF)) && pwm_dma_ok();
-    return result;
+    return prepared_sample_;
 }
 drive::Sample Board::current_sample() noexcept {
     const std::array<std::uint16_t, 3> raw{adc_frame_[0], adc_frame_[1], adc_frame_[2]};
-    if (offset_samples_ < 1024) {
-        for (std::size_t i = 0; i < 3; ++i) {
+    const bool awake = (DRV_ENABLE_GPIO_Port->ODR & DRV_ENABLE_Pin) != 0;
+    if (!offsets_valid_ && awake && offset_samples_ < 1024) {
+        for (unsigned i = 0; i < 3; ++i) {
             offset_sum_[i] += raw[i];
-            offset_min_[i] = std::min(offset_min_[i], raw[i]);
-            offset_max_[i] = std::max(offset_max_[i], raw[i]);
         }
         if (++offset_samples_ == 1024) {
             offsets_valid_ = true;
-            for (std::size_t i = 0; i < 3; ++i) {
+            for (unsigned i = 0; i < 3; ++i) {
                 offsets_[i] = static_cast<float>(offset_sum_[i]) / 1024.0F;
-                if (offsets_[i] < 1700 || offsets_[i] > 2400 || offset_max_[i] - offset_min_[i] > 100) {
+                if (offsets_[i] < 1000 || offsets_[i] > 3100) {
                     offsets_valid_ = false;
                 }
             }
+            if (!offsets_valid_) {
+                offset_sum_ = {};
+                offset_samples_ = 0;
+            }
         }
     }
+    const auto scale = vdda_ / (4095.0F * drivers::current_volts_per_amp);
     drive::Sample s{};
-    // GAIN floating: 1 V/A. Verified with a stationary positive alpha vector:
-    // A sources current (ADC above offset), B/C sink current (below offset).
-    const auto scale = vdda_ / 4095.0F;
     s.current = {(raw[0] - offsets_[0]) * scale, (raw[1] - offsets_[1]) * scale,
                  (raw[2] - offsets_[2]) * scale};
     s.bus_voltage = drivers::bus_voltage(adc_frame_[3], vdda_);
-    s.mcu_temperature = temperature_;
-    s.encoder_ok = encoder_ok_;
     s.angle = encoder_angle_;
-    s.driver_ok = HAL_GPIO_ReadPin(DRV_FAULT_GPIO_Port, DRV_FAULT_Pin) == GPIO_PIN_SET;
-    s.adc_ok = std::all_of(raw.begin(), raw.end(), [](auto x) { return x > 20 && x < 4075; }) &&
-               !(ADC1->ISR & (ADC_ISR_OVR | ADC_ISR_JQOVF)) && housekeeping_ok_ && pwm_dma_ok();
+    s.encoder_ok = encoder_ok_;
+    s.driver_ok = true; // nFAULT is not connected in the supplied v2 pin table.
+    s.mcu_temperature = temperature_;
     s.current_calibrated = offsets_valid_;
-    if (offset_samples_ == 1024 && !offsets_valid_) {
-        s.adc_ok = false;
+    s.current_mask = 0;
+    // 2.2 us covers fastest-slew propagation max 1.05 us + CSA settling 1 us.
+    // Rank 1 holds at 25.11 us, rank 2 at 26.04 us. Test each phase's low interval.
+    for (unsigned i = 0; i < 3; ++i) {
+        if (awake && raw[i] > 20 && raw[i] < 4075 &&
+            drivers::current_window_valid(active_duty_[i], i == 2 ? 1U : 0U)) {
+            s.current_mask = static_cast<std::uint8_t>(s.current_mask | (1U << i));
+        }
     }
+    const auto errors = (ADC1->ISR | ADC2->ISR) & (ADC_ISR_OVR | ADC_ISR_JQOVF);
+    if (errors) {
+        roller_hardware.adc_errors = roller_hardware.adc_errors + 1;
+        ADC1->ISR = ADC_ISR_OVR | ADC_ISR_JQOVF;
+        ADC2->ISR = ADC_ISR_OVR | ADC_ISR_JQOVF;
+        s.current_mask = 0;
+    }
+    s.adc_ok = errors == 0;
+    s.current_angle_delay = 30.0e-6F; // sensor <5 us + current sample at ~25 us.
+    s.voltage_angle_delay = 80.0e-6F; // next PWM average at 75 us + sensor delay.
+    s.applied_voltage_valid = true;
+    if (awake && (TIM1->CCER & TIM_CCER_CC1E)) {
+        s.applied_voltage = control::clarke({active_duty_[0] * s.bus_voltage / 4000.0F,
+                                             active_duty_[1] * s.bus_voltage / 4000.0F,
+                                             active_duty_[2] * s.bus_voltage / 4000.0F});
+    }
+    roller_hardware.sequence = roller_hardware.sequence + 1;
+    __DMB();
+    roller_hardware.frames = roller_hardware.frames + 1;
+    roller_hardware.adc_a = raw[0];
+    roller_hardware.adc_b = raw[1];
+    roller_hardware.adc_c = raw[2];
+    roller_hardware.adc_bus = adc_frame_[3];
+    roller_hardware.adc_ntc = adc_frame_[4];
+    roller_hardware.angle = s.angle;
+    roller_hardware.bus = s.bus_voltage;
+    roller_hardware.vdda = vdda_;
+    roller_hardware.temperature = temperature_;
+    roller_hardware.current_mask = s.current_mask;
+    roller_hardware.offset_a = offsets_[0];
+    roller_hardware.offset_b = offsets_[1];
+    roller_hardware.offset_c = offsets_[2];
+    roller_hardware.offsets_valid = offsets_valid_;
+    roller_hardware.driver_awake = awake;
+    roller_hardware.pwm_deferred = roller_pwm_deferred;
+    __DMB();
+    roller_hardware.sequence = roller_hardware.sequence + 1;
     return s;
 }
 bool Board::housekeeping() noexcept {
     ++housekeeping_ticks_;
     if (housekeeping_pending_ && __HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_JEOS)) {
-        const auto raw_temperature = static_cast<std::uint16_t>(ADC1->JDR1);
-        const auto raw_reference = static_cast<std::uint16_t>(ADC1->JDR2);
+        const auto raw_t = static_cast<std::uint16_t>(ADC1->JDR1);
+        const auto raw_v = static_cast<std::uint16_t>(ADC1->JDR2);
         __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_JEOC | ADC_FLAG_JEOS);
         housekeeping_pending_ = false;
-        if (raw_reference < 500 || raw_reference > 3000) {
-            return false;
+        if (raw_v > 500 && raw_v < 3000) {
+            const auto mv = __LL_ADC_CALC_VREFANALOG_VOLTAGE(raw_v, LL_ADC_RESOLUTION_12B);
+            if (mv >= 2900 && mv <= 3600) {
+                vdda_ = static_cast<float>(mv) / 1000.0F;
+                temperature_ =
+                    static_cast<float>(__LL_ADC_CALC_TEMPERATURE(mv, raw_t, LL_ADC_RESOLUTION_12B));
+            }
         }
-        const auto mv = __LL_ADC_CALC_VREFANALOG_VOLTAGE(raw_reference, LL_ADC_RESOLUTION_12B);
-        if (mv < 2900 || mv > 3600) {
-            return false;
-        }
-        vdda_ = static_cast<float>(mv) / 1000.0F;
-        temperature_ =
-            static_cast<float>(__LL_ADC_CALC_TEMPERATURE(mv, raw_temperature, LL_ADC_RESOLUTION_12B));
     }
     if (housekeeping_pending_ && housekeeping_ticks_ - housekeeping_started_ > 4) {
-        return false;
+        housekeeping_pending_ = false; // Retry, retain the last valid VDDA/temperature.
     }
-    if (!housekeeping_pending_ && housekeeping_ticks_ % 2000 == 0) {
-        // At this point the fast regular sequence is finished. These two slow
-        // internal conversions finish well before the next 50-us trigger.
-        __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_JEOC | ADC_FLAG_JEOS | ADC_FLAG_JQOVF);
+    if (!housekeeping_pending_ && housekeeping_ticks_ % 2000 == 1) {
         housekeeping_pending_ = true;
         housekeeping_started_ = housekeeping_ticks_;
+        __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_JEOC | ADC_FLAG_JEOS | ADC_FLAG_JQOVF);
         LL_ADC_INJ_StartConversion(ADC1);
     }
     return true;
 }
 void Board::apply(drive::Output output) noexcept {
-    if (!std::isfinite(output.duty.a) || !std::isfinite(output.duty.b) || !std::isfinite(output.duty.c)) {
-        gate_off();
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::configuration));
-        return;
-    }
-    if (!output.enable || channels_.inhibit.load(std::memory_order_acquire) || !offsets_valid_ ||
-        reset_frame_) {
-        gate_off();
-        if (!write_pwm_dma({2000, 2000, 2000})) {
-            channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::timing));
-        }
-        return;
-    }
-    const auto ticks = [](float duty) {
-        return static_cast<std::uint16_t>(std::clamp(duty, 0.1F, 0.9F) * 4000.0F);
-    };
-    // A -> TIM1_CH3, B -> CH2, C -> CH1: verified against the schematic.
-    if (!write_pwm_dma({ticks(output.duty.c), ticks(output.duty.b), ticks(output.duty.a)})) {
-        gate_off();
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::timing));
-        return;
-    }
-    __DMB();
-    // An EXTI fault may preempt above. Recheck input and latch before enabling.
-    const auto irq = __get_PRIMASK();
-    __disable_irq();
-    if (!channels_.asynchronous_fault.load(std::memory_order_acquire) &&
-        !channels_.inhibit.load(std::memory_order_acquire) && (GPIOB->IDR & DRV_FAULT_Pin)) {
-        GPIOB->BSRR = PWM_ENABLE_Pin;
-    }
-    __set_PRIMASK(irq);
-}
-void Board::fault_irq() noexcept {
+#ifdef ROLLER_NO_MOTION
+    (void)output;
     gate_off();
-    if (sampling()) {
-        channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::driver),
-                                           std::memory_order_release);
+#else
+    if (!offsets_valid_) {
+        return; // Only startup current-zero acquisition, never a runtime lease.
     }
+    if (!output.enable || channels_.inhibit.load(std::memory_order_acquire)) {
+        enable_pending_ = false;
+        gate_off();
+        return;
+    }
+    if (!std::isfinite(output.duty.a) || !std::isfinite(output.duty.b) || !std::isfinite(output.duty.c)) {
+        return;
+    }
+    if (!(DRV_ENABLE_GPIO_Port->ODR & DRV_ENABLE_Pin)) {
+        HAL_GPIO_WritePin(DRV_ENABLE_GPIO_Port, DRV_ENABLE_Pin, GPIO_PIN_SET);
+        wake_cycles_ = DWT->CYCCNT;
+        return;
+    }
+    if (DWT->CYCCNT - wake_cycles_ < 800000) {
+        return;
+    }
+    const auto ticks = [](float d) {
+        return static_cast<std::uint16_t>(std::clamp(d, 0.0F, 1.0F) * 4000.0F);
+    };
+    const std::array<std::uint16_t, 3> abc{ticks(output.duty.a), ticks(output.duty.b), ticks(output.duty.c)};
+    if (write_pwm(abc)) {
+        pending_duty_ = abc;
+        duty_pending_ = true;
+        enable_pending_ = true;
+    }
+#endif
 }
 void Board::can_irq() noexcept {
     // Hardware FIFO depth is 3. Bound each ISR; further arrivals pend another IRQ.
@@ -379,8 +381,7 @@ void Board::can_irq() noexcept {
         frame.brs = header.BitRateSwitch == FDCAN_BRS_ON;
         if (!can_rx_.push(frame)) {
             rx_errors_.store(CO_CAN_ERRRX_OVERFLOW);
-            gate_off();
-            channels_.asynchronous_fault.store(static_cast<std::uint32_t>(drive::Fault::communication));
+            channels_.communication_errors.fetch_add(1, std::memory_order_relaxed);
         }
     }
 }
@@ -404,11 +405,10 @@ RollerCanTransport Board::can_transport() noexcept {
                     HAL_FDCAN_Start(&hfdcan1) != HAL_OK) {
                     return false;
                 }
-                HAL_GPIO_WritePin(CAN_STB_GPIO_Port, CAN_STB_Pin, GPIO_PIN_RESET);
+
                 return true;
             },
             [](void*) {
-                HAL_GPIO_WritePin(CAN_STB_GPIO_Port, CAN_STB_Pin, GPIO_PIN_SET);
                 if (hfdcan1.State == HAL_FDCAN_STATE_BUSY) {
                     (void)HAL_FDCAN_Stop(&hfdcan1);
                 }
@@ -448,9 +448,7 @@ RollerCanTransport Board::can_transport() noexcept {
                 std::uint16_t errors = static_cast<std::uint16_t>(self.rx_errors_.load());
                 if (status.BusOff) {
                     errors |= CO_CAN_ERRTX_BUS_OFF;
-                    self.gate_off();
-                    self.channels_.asynchronous_fault.store(
-                        static_cast<std::uint32_t>(drive::Fault::communication));
+                    self.channels_.communication_errors.fetch_add(1, std::memory_order_relaxed);
                     if (++self.bus_off_ticks_ >= 500) {
                         self.bus_off_ticks_ = 0;
                         (void)HAL_FDCAN_AbortTxRequest(&hfdcan1, hfdcan1.Instance->TXBRP);

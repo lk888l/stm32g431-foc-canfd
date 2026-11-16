@@ -1,3 +1,5 @@
+> 历史记录：本文件针对旧 Unit-RollerCAN/DRV8311/TLI5012 硬件，不是当前 v2 硬件的验证结果。当前记录见 [v2-validation.md](v2-validation.md)。PWM 和 CORDIC DMA 已移除。
+
 # DMA 实机验证（2026-10-22）
 
 设备：STM32G431CB / Unit-RollerCAN，160 MHz；ST-Link SWD 1800 kHz。全部验证保持 PB2 低、电机关闭。ST-Link 报告约 0.58 V，但连接、Flash 编程及校验均成功；ADC 测得电机母线约 11.65 V。

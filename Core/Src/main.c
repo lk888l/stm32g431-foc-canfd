@@ -96,7 +96,8 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
-  MX_SPI1_Init();
+  MX_ADC2_Init();
+  MX_SPI3_Init();
   MX_TIM1_Init();
   MX_TIM7_Init();
   MX_FDCAN1_Init();

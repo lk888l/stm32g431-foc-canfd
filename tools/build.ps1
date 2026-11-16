@@ -1,5 +1,5 @@
 param(
-    [ValidateSet('Debug', 'Release', 'Host', 'Bench')][string]$Preset = 'Debug',
+    [ValidateSet('Debug', 'Release', 'Host', 'Bench', 'Bringup')][string]$Preset = 'Debug',
     [string]$Python = 'python',
     [ValidateRange(1, 256)][int]$Jobs = 8,
     [switch]$Fresh
@@ -36,7 +36,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'Host tests failed' }
     } else {
         $benchArguments = @()
-        if ($Preset -eq 'Bench') { $benchArguments = @('--bench') }
+        if ($Preset -eq 'Bench' -or $Preset -eq 'Bringup') { $benchArguments = @('--bench') }
         & $Python tools/check_project.py --elf "build/$Preset/canopen_foc.elf" @benchArguments
         if ($LASTEXITCODE -ne 0) { throw 'ELF contract check failed' }
     }

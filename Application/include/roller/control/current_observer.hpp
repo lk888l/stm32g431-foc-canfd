@@ -6,11 +6,20 @@ namespace roller::control {
 // parameters: Rline/2 = 1.8 ohm, Ldelta/3 = 0.433 mH (datasheet estimate).
 inline constexpr float motor_resistance = 1.8F;
 inline constexpr float motor_inductance = 0.0013F / 3.0F;
-inline constexpr float current_bandwidth = 500.0F; // Hz; tune under load after commissioning.
+// Effective phase-peak back EMF per mechanical rad/s, fitted from bidirectional
+// 6/9/12 rev/s duty/bus/current data. Independent of the unverified Nm/A setting
+// used by the external torque interface; see docs/motor-performance.md.
+inline constexpr float motor_back_emf = 0.104F;
+inline constexpr float current_bandwidth = 800.0F; // Nominal PI tuning, not a measured closed-loop bandwidth.
 
 class CurrentObserver {
   public:
     Abc update(Abc measured, std::uint8_t valid, AlphaBeta voltage, AlphaBeta emf, float dt) noexcept {
+        if (valid == 7) {
+            const float common = (measured.a + measured.b + measured.c) / 3.0F;
+            current_ = {measured.a - common, measured.b - common, measured.c - common};
+            return current_; // No RL prediction is needed when every phase is measured.
+        }
         auto predicted = clarke(current_);
         predicted.alpha +=
             dt / motor_inductance * (voltage.alpha - emf.alpha - motor_resistance * predicted.alpha);

@@ -3,6 +3,7 @@
 #include "roller/core/channels.hpp"
 #include "roller/core/module.hpp"
 #include "roller/core/storage.hpp"
+#include "roller/drivers/current_zero.hpp"
 #include "roller/drivers/mt6701.hpp"
 #include "ssi_dma.hpp"
 #include <atomic>
@@ -14,6 +15,7 @@ struct HardwareDiagnostics {
         missed_frames{};
     float angle{}, bus{}, vdda{}, temperature{}, offset_a{}, offset_b{}, offset_c{};
     std::uint32_t offsets_valid{}, driver_awake{}, no_motion{}, pwm_deferred{}, warnings{}, can_loopback{};
+    std::uint32_t zero_state{}, zero_reason{}, zero_span{}, zero_elapsed{};
 };
 class Board final : public Module {
   public:
@@ -24,6 +26,11 @@ class Board final : public Module {
     Result start_sampling() noexcept;
     void stop_sampling() noexcept;
     drive::Sample sample() noexcept;
+#ifdef ROLLER_BENCH
+    const auto& sampled_duty() const noexcept {
+        return sampled_duty_;
+    }
+#endif
     bool begin_sample(unsigned half, void (*ready)()) noexcept;
     void encoder_trigger() noexcept;
     void apply(drive::Output output) noexcept;
@@ -50,17 +57,19 @@ class Board final : public Module {
     drive::Sample prepared_sample_{};
     bool encoder_ok_{};
     float encoder_angle_{};
+    std::uint16_t encoder_counts_{};
     bool housekeeping_pending_{};
     Channels& channels_;
     SpscQueue<RollerCanFrame, 32> can_rx_;
     std::atomic<bool> sampling_{};
     std::atomic<std::uint32_t> rx_errors_{};
     float vdda_{3.3F}, temperature_{25};
-    std::array<std::uint32_t, 3> offset_sum_{};
-    std::array<float, 3> offsets_{2048, 2048, 2048};
-    std::uint32_t offset_samples_{};
-    bool offsets_valid_{}, duty_pending_{}, enable_pending_{};
-    std::array<std::uint16_t, 3> active_duty_{}, pending_duty_{};
+    drivers::CurrentZero current_zero_{};
+    bool duty_pending_{}, enable_pending_{}, driver_settled_{}, request_pending_{};
+    std::array<std::uint16_t, 3> active_duty_{}, pending_duty_{}, requested_duty_{};
+#ifdef ROLLER_BENCH
+    std::array<std::uint16_t, 3> sampled_duty_{};
+#endif
     std::uint32_t housekeeping_ticks_{}, housekeeping_started_{}, wake_cycles_{};
     std::uint16_t bus_off_ticks_{};
     std::uint32_t synchronous_tx_mask_{};

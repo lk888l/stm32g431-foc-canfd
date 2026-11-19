@@ -426,6 +426,12 @@ ODR_t Node::on_write(OD_stream_t* s, const void* b, OD_size_t n, OD_size_t* writ
             return ODR_DATA_DEV_STATE;
         }
         if (sub == 1) {
+            const auto request = decode<std::uint32_t>(b);
+            if (request == 0x66666F63U || request == 0x206E6F63U) { // "coff" / "con "
+                command_.cogging_enabled = request == 0x206E6F63U;
+                *written = n;
+                return ODR_OK;
+            }
             if (CO_NMT_getInternalState(co_->NMT) != CO_NMT_PRE_OPERATIONAL || telemetry_.samples < 1024 ||
                 telemetry_.fault != drive::Fault::none || (telemetry_.statusword & 0x6F) != 0x40 ||
                 OD_RAM.x6040_00 != 0 ||
@@ -433,9 +439,13 @@ ODR_t Node::on_write(OD_stream_t* s, const void* b, OD_size_t n, OD_size_t* writ
                  telemetry_.calibration <= drive::Calibration::settle)) {
                 return ODR_DATA_DEV_STATE;
             }
-            if (decode<std::uint32_t>(b) != 0x696C6163U) {
+            if (request != 0x696C6163U && request != 0x776F6C73U) {
                 return ODR_INVALID_VALUE;
             }
+            if (request == 0x776F6C73U && !telemetry_.config.calibrated) {
+                return ODR_DATA_DEV_STATE;
+            }
+            command_.calibration_slow = request == 0x776F6C73U;
             ++command_.calibration_request;
             *written = n;
             return ODR_OK;

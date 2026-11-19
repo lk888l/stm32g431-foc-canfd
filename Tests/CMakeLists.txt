@@ -12,3 +12,8 @@ target_link_libraries(roller_canfd_tests PRIVATE roller_protocol)
 target_include_directories(roller_canfd_tests PRIVATE ${CMAKE_SOURCE_DIR}/Platform/STM32)
 target_compile_options(roller_canfd_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
 add_test(NAME roller_canfd_protocol COMMAND roller_canfd_tests)
+
+add_executable(roller_commissioning_tests test_commissioning.cpp)
+target_link_libraries(roller_commissioning_tests PRIVATE roller_domain)
+target_compile_options(roller_commissioning_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+add_test(NAME roller_commissioning COMMAND roller_commissioning_tests)

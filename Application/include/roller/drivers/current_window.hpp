@@ -11,6 +11,8 @@ constexpr bool current_window_valid(std::uint16_t compare, unsigned rank) noexce
     return compare + 352U < start && compare < 8000U - end;
 }
 constexpr bool pwm_update_window(std::uint32_t count, bool down, bool update_pending) noexcept {
-    return down && count >= 320U && !update_pending;
+    // A TIM1 underflow ISR commits in the up-counting half. Retain a 2 us
+    // guard for callers in the down-counting half and reject a pending latch.
+    return count <= 4000U && (!down || count >= 320U) && !update_pending;
 }
 } // namespace roller::drivers

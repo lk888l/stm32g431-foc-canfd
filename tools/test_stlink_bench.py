@@ -15,6 +15,7 @@ import stlink_bench
 
 class SimulatedBench(stlink_bench.Bench):
     def __init__(self, *_):
+        self.symbols = {}
         self.events = []
         self.status = 0x40
         self.position = 3.9
@@ -124,12 +125,51 @@ class BenchCommandsTest(unittest.TestCase):
     def test_invalid_inputs_never_open_transport(self):
         cases = (["velocity", "nan"], ["velocity", "1", "--seconds", "inf"],
                  ["torque", "201"], ["position", "0", "--speed", "0"],
-                 ["mit", "--kp", "nan"], ["mit", "--torque", "0.006"])
+                 ["mit", "--kp", "nan"], ["mit", "--torque", "0.006"],
+                 ["velocity", "1", "--current-limit", "nan"])
         for argv in cases:
             with self.subTest(argv=argv), patch.object(stlink_bench, "Bench") as bench:
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                     stlink_bench.main(argv)
                 bench.assert_not_called()
+
+    def test_motion_requires_current_feedback_and_motion_build(self):
+        for state, message in (({"no_motion": 1}, "Bringup"),
+                               ({"offsets_valid": 0, "zero_reason": 1}, "offset outside range")):
+            bench = SimulatedBench()
+            snapshot = dict(bench.snapshot(), **state)
+            with patch.object(bench, "snapshot", return_value=snapshot):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    bench.enable_velocity()
+            self.assertNotIn(("nmt", 1), bench.events)
+
+    def test_run_motion_sets_current_limit_before_enable(self):
+        bench = SimulatedBench()
+        args = SimpleNamespace(operation="velocity", target=0.1, seconds=0, current_limit=0.05)
+        stlink_bench.run_motion(bench, args, [])
+        limit = ("sdo", 0x6072, 0, 200, 2, None)
+        self.assertIn(limit, bench.events[:bench.events.index(("nmt", 1))])
+
+    def test_mit_higher_stiffness_preserves_wire_units(self):
+        bench = SimulatedBench()
+        bench.enable_mit(position=0.08, relative=True, kp=3, kd=0.04)
+        self.assertIn(("sdo", 0x2003, 4, 3000, 2, None), bench.events)
+        self.assertIn(("sdo", 0x2003, 5, 40, 2, None), bench.events)
+        with self.assertRaises(ValueError):
+            bench.enable_mit(kp=5.1)
+
+    def test_calibration_block_preserves_diagnostics_and_stops(self):
+        bench = SimulatedBench()
+        state = dict(bench.snapshot(), offsets_valid=0, zero_reason=1, fault=0x5210)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "blocked.json"
+            with patch.object(stlink_bench, "Bench", return_value=bench), \
+                 patch.object(bench, "snapshot", return_value=state):
+                with self.assertRaisesRegex(RuntimeError, "Current-zero"):
+                    stlink_bench.main(["--output", str(path), "calibrate"])
+            self.assertEqual(json.loads(path.read_text())[0]["zero_reason"], 1)
+        self.assertFalse(bench.active)
+        self.assertFalse(any(e[:3] == ("sdo", 0x2100, 1) for e in bench.events))
 
     def test_overspeed_stops_and_preserves_fault_sample(self):
         bench = SimulatedBench()
@@ -160,6 +200,7 @@ class BenchCommandsTest(unittest.TestCase):
 
     def test_stop_failure_halts_before_disabling_power(self):
         bench = stlink_bench.Bench.__new__(stlink_bench.Bench)
+        bench._guard_armed = False
         halted = False
         registers = {0x48000418: 0, 0x40012C20: 0x1111}
         def command(value):
@@ -181,6 +222,15 @@ class BenchCommandsTest(unittest.TestCase):
         self.assertEqual(registers[0x48000418], 1 << (10 + 16))
         self.assertEqual(registers[0x40012C20], 0x1000)
 
+    def test_lost_guarded_stop_keeps_board_timeout_running(self):
+        bench = stlink_bench.Bench.__new__(stlink_bench.Bench)
+        bench._guard_armed = True
+        with patch.object(bench, "nmt", side_effect=TimeoutError("SWD offline")), \
+             patch.object(bench, "command") as command:
+            with self.assertRaisesRegex(TimeoutError, "SWD offline"):
+                bench.stop()
+            command.assert_not_called()
+
     def test_snapshot_waits_for_new_sequence_before_bulk_read(self):
         bench = stlink_bench.Bench.__new__(stlink_bench.Bench)
         bench.state, bench.request = 0x20000000, 0x20000100
@@ -198,7 +248,47 @@ class BenchCommandsTest(unittest.TestCase):
             bench.snapshot()
         bulk = calls.index((bench.state, 31))
         self.assertEqual(sum(call == (bench.state + 8, 1) for call in calls[:bulk]), 4)
-        self.assertEqual(calls.count((bench.state, 31)), 1)
+        self.assertEqual(calls.count((bench.state, 31)), 2)  # Confirm the frozen data agree.
+
+    def test_trace_is_frozen_complete_and_consecutive(self):
+        bench = stlink_bench.Bench.__new__(stlink_bench.Bench)
+        bench.symbols = dict(roller_trace_request=1, roller_trace_ack=2,
+                             roller_trace_count=3, roller_trace_data=4)
+        path_seen = []
+        def command(value):
+            path = Path(value.split("{", 1)[1].split("}", 1)[0])
+            path_seen.append(path)
+            path.write_bytes(b"".join(struct.pack("<I5f", n * 20, 0.2, 0.1, 0.05, 0, 0.04)
+                                       for n in range(96)))
+            return ""
+        memory = {1: 9, 2: 10, 3: 96}
+        with patch.object(bench, "read", side_effect=lambda address, _: [memory[address]]), \
+             patch.object(bench, "write", side_effect=lambda address, words: memory.update({address: words[0]})), \
+             patch.object(bench, "command", side_effect=command):
+            rows = bench.capture()
+        self.assertEqual(len(rows), 96)
+        self.assertEqual(rows[-1]["samples"], 1900)
+        self.assertAlmostEqual(rows[0]["velocity"], 0.1)
+        self.assertFalse(path_seen[0].exists())
+
+    def test_version_five_voltage_snapshot(self):
+        bench = stlink_bench.Bench.__new__(stlink_bench.Bench)
+        bench.state, bench.request = 0x20000000, 0x20000100
+        sequences = iter((2, 4, 4, 4, 4))
+        words = [0x524C4142, 5, 4] + [0] * 28
+        def read(address, count):
+            if address == bench.state + 8:
+                return [next(sequences)]
+            if address == bench.request:
+                return [0]
+            if address == bench.state + 124:
+                return [0] * 17
+            if address == bench.state + 192:
+                return list(struct.unpack("<3I", struct.pack("<3f", 2, -1, -1)))
+            return words
+        with patch.object(bench, "read", side_effect=read), patch.object(bench, "write"):
+            state = bench.snapshot()
+        self.assertEqual((state["voltage_a"], state["voltage_b"], state["voltage_c"]), (2, -1, -1))
 
 
 if __name__ == "__main__":

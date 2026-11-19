@@ -21,8 +21,8 @@ bool write_pwm(std::array<std::uint16_t, 3> abc) noexcept {
     }
     const auto mask = __get_PRIMASK();
     __disable_irq();
-    // Admit the entire preload update only with >2 us until underflow.
-    // A late calculation retains all three previous duties for another period.
+    // Called at underflow after the previous preload has latched. The new
+    // triple has a full PWM period before its latch, independent of ADC WCET.
     const auto count = TIM1->CNT;
     if (!drivers::pwm_update_window(count, (TIM1->CR1 & TIM_CR1_DIR) != 0, (TIM1->SR & TIM_SR_UIF) != 0)) {
         ++roller_pwm_deferred;

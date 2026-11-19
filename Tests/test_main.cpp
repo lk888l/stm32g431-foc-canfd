@@ -755,19 +755,28 @@ static void commissioning_tests() {
         Command command{};
         command.calibration_request = 1;
         Sample sample{{}, 12, 1, 25, true, true, true, true};
-        float previous = 0, total = 0;
-        for (int i = 0; i < 140020; ++i) {
+        float previous = 0, total = 0, rotor = 0;
+        for (int i = 0; i < 352050; ++i) {
             if (i % 20 == 0) {
                 ++command.sequence;
                 controller.command(command);
             }
             const auto output = controller.step(sample);
-            if (output.enable && direction) {
+            if (output.enable) {
                 const auto voltage = clarke(output.duty);
                 const auto theta = std::atan2(voltage.beta, voltage.alpha);
                 total += wrap_signed(theta - previous);
                 previous = theta;
-                sample.angle = wrap(1 + static_cast<float>(direction) * total / 7);
+                // Resistive phase response plus a finite-speed rotor: neither
+                // the phase probes nor encoder changes teleport the rotor.
+                const auto common = (output.duty.a + output.duty.b + output.duty.c) / 3;
+                sample.current = {(output.duty.a - common) * sample.bus_voltage / motor_resistance,
+                                  (output.duty.b - common) * sample.bus_voltage / motor_resistance,
+                                  (output.duty.c - common) * sample.bus_voltage / motor_resistance};
+                rotor = slew(rotor, total, 21.0F, Controller::dt);
+                if (direction) {
+                    sample.angle = wrap(1 + static_cast<float>(direction) * rotor / 7);
+                }
             }
         }
         const auto result = controller.telemetry();
@@ -908,8 +917,17 @@ static void protocol_boundary_tests() {
         ProtocolFixture f;
         CHECK(f.sdo(0x2100, 1, 0x23, 0x696C6163).data[0] == 0x80);
         f.telemetry.samples = 2000;
+        CHECK(f.sdo(0x2100, 1, 0x23, 0x776F6C73).data[0] == 0x80);
+        f.telemetry.config.calibrated = 1;
+        CHECK(f.sdo(0x2100, 1, 0x23, 0x776F6C73).data[0] == 0x60);
+        CHECK(f.process().calibration_slow);
+        CHECK(f.sdo(0x2100, 1, 0x23, 0x66666F63).data[0] == 0x60);
+        CHECK(!f.process().cogging_enabled);
+        CHECK(f.sdo(0x2100, 1, 0x23, 0x206E6F63).data[0] == 0x60);
+        CHECK(f.process().cogging_enabled);
         CHECK(f.sdo(0x2100, 1, 0x23, 0x696C6163).data[0] == 0x60);
-        CHECK(f.process().calibration_request == 1);
+        CHECK(f.process().calibration_request == 2);
+        CHECK(!f.process().calibration_slow);
         f.telemetry.calibration = drive::Calibration::align;
         CHECK(f.sdo(0x2100, 1, 0x23, 0x696C6163).data[0] == 0x80);
     }
@@ -1185,7 +1203,9 @@ static void v2_regressions() {
     CHECK(!drivers::current_window_valid(4000, 0));
     CHECK(drivers::pwm_update_window(320, true, false));
     CHECK(!drivers::pwm_update_window(319, true, false));
-    CHECK(!drivers::pwm_update_window(3000, false, false));
+    CHECK(drivers::pwm_update_window(0, false, false));
+    CHECK(drivers::pwm_update_window(3000, false, false));
+    CHECK(!drivers::pwm_update_window(4001, false, false));
     CHECK(!drivers::pwm_update_window(3000, true, true));
     using namespace drive;
     // Verify the actual line-voltage vector across all six sectors at the
@@ -1272,8 +1292,8 @@ static void v2_regressions() {
     Command calibration;
     calibration.calibration_request = 1;
     sample = {{}, 24, 1, 25, true, true, true, true};
-    float previous = 0, travel = 0;
-    for (int i = 0; i < 140020; ++i) {
+    float previous = 0, travel = 0, rotor = 0;
+    for (int i = 0; i < 352050; ++i) {
         if (i % 20 == 0) {
             ++calibration.sequence;
             slipping.command(calibration);
@@ -1284,8 +1304,13 @@ static void v2_regressions() {
             const float angle = std::atan2(v.beta, v.alpha);
             travel += wrap_signed(angle - previous);
             previous = angle;
+            const auto common = (out.duty.a + out.duty.b + out.duty.c) / 3;
+            sample.current = {(out.duty.a - common) * sample.bus_voltage / motor_resistance,
+                              (out.duty.b - common) * sample.bus_voltage / motor_resistance,
+                              (out.duty.c - common) * sample.bus_voltage / motor_resistance};
+            rotor = slew(rotor, travel, 21.0F, Controller::dt);
             if (travel < 2 * tau) {
-                sample.angle = wrap(1 + travel / 7);
+                sample.angle = wrap(1 + rotor / 7);
             }
         }
     }

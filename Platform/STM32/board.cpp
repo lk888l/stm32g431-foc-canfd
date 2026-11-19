@@ -105,6 +105,7 @@ Result Board::on_start() noexcept {
 #else
     // Wake only for current-zero acquisition; CH1-3 remain disconnected, all INH low.
     HAL_GPIO_WritePin(DRV_ENABLE_GPIO_Port, DRV_ENABLE_Pin, GPIO_PIN_SET);
+    wake_cycles_ = DWT->CYCCNT;
 #endif
     HAL_Delay(40); // MT6701 power-up maximum 32 ms; no motor actuation.
     return {};
@@ -126,6 +127,8 @@ Result Board::start_sampling() noexcept {
     active_duty_ = {};
     pending_duty_ = {};
     duty_pending_ = false;
+    request_pending_ = false;
+    enable_pending_ = false;
     __HAL_TIM_SET_COUNTER(&htim1, 0);
     (void)HAL_TIM_GenerateEvent(&htim1, TIM_EVENTSOURCE_UPDATE);
     __HAL_TIM_CLEAR_IT(&htim1, TIM_IT_UPDATE);
@@ -168,6 +171,7 @@ void Board::encoder_complete(std::uint32_t frame, bool ok) noexcept {
     roller_hardware.encoder_raw = frame;
     if (self.encoder_ok_) {
         self.encoder_angle_ = decoded->angle;
+        self.encoder_counts_ = decoded->counts;
         roller_hardware.encoder_status = decoded->status;
         roller_hardware.encoder_frames = roller_hardware.encoder_frames + 1;
     } else {
@@ -188,6 +192,15 @@ void Board::encoder_trigger() noexcept {
 #endif
         enable_pending_ = false;
     }
+#ifndef ROLLER_NO_MOTION
+    if (request_pending_ && !channels_.inhibit.load(std::memory_order_acquire) &&
+        (DRV_ENABLE_GPIO_Port->ODR & DRV_ENABLE_Pin) && write_pwm(requested_duty_)) {
+        pending_duty_ = requested_duty_;
+        duty_pending_ = true;
+        enable_pending_ = true;
+        request_pending_ = false;
+    }
+#endif
     if (encoder_.busy()) {
         encoder_.abort();
         roller_hardware.missed_frames = roller_hardware.missed_frames + 1;
@@ -222,44 +235,45 @@ drive::Sample Board::sample() noexcept {
 drive::Sample Board::current_sample() noexcept {
     const std::array<std::uint16_t, 3> raw{adc_frame_[0], adc_frame_[1], adc_frame_[2]};
     const bool awake = (DRV_ENABLE_GPIO_Port->ODR & DRV_ENABLE_Pin) != 0;
-    if (!offsets_valid_ && awake && offset_samples_ < 1024) {
-        for (unsigned i = 0; i < 3; ++i) {
-            offset_sum_[i] += raw[i];
-        }
-        if (++offset_samples_ == 1024) {
-            offsets_valid_ = true;
-            for (unsigned i = 0; i < 3; ++i) {
-                offsets_[i] = static_cast<float>(offset_sum_[i]) / 1024.0F;
-                if (offsets_[i] < 1000 || offsets_[i] > 3100) {
-                    offsets_valid_ = false;
-                }
-            }
-            if (!offsets_valid_) {
-                offset_sum_ = {};
-                offset_samples_ = 0;
-            }
-        }
+    if (!awake) {
+        driver_settled_ = false;
+    } else if (!driver_settled_ && DWT->CYCCNT - wake_cycles_ >= 800000) {
+        driver_settled_ = true; // Latch: CYCCNT wraps every 26.8 s at 160 MHz.
     }
+    const bool settled = awake && driver_settled_;
+    const auto errors = (ADC1->ISR | ADC2->ISR) & (ADC_ISR_OVR | ADC_ISR_JQOVF);
+#ifndef ROLLER_NO_MOTION
+    current_zero_.update(raw, settled && !errors && (TIM1->CCER & 0x111U) == 0, vdda_);
+#endif
+    const auto& offsets = current_zero_.means();
     const auto scale = vdda_ / (4095.0F * drivers::current_volts_per_amp);
     drive::Sample s{};
-    s.current = {(raw[0] - offsets_[0]) * scale, (raw[1] - offsets_[1]) * scale,
-                 (raw[2] - offsets_[2]) * scale};
+    if (current_zero_.valid() && settled) {
+        s.current = {(raw[0] - offsets[0]) * scale, (raw[1] - offsets[1]) * scale,
+                     (raw[2] - offsets[2]) * scale};
+    }
     s.bus_voltage = drivers::bus_voltage(adc_frame_[3], vdda_);
     s.angle = encoder_angle_;
+    s.encoder_counts = encoder_counts_;
     s.encoder_ok = encoder_ok_;
     s.driver_ok = true; // nFAULT is not connected in the supplied v2 pin table.
     s.mcu_temperature = temperature_;
-    s.current_calibrated = offsets_valid_;
+    s.current_calibrated = current_zero_.valid();
+    s.current_zero_failed = current_zero_.failed();
+    s.power_ready = settled && (TIM1->CCER & 0x111U) == 0x111U;
+    const auto duty = active_duty_;
+#ifdef ROLLER_BENCH
+    sampled_duty_ = duty;
+#endif
     s.current_mask = 0;
     // 2.2 us covers fastest-slew propagation max 1.05 us + CSA settling 1 us.
     // Rank 1 holds at 25.11 us, rank 2 at 26.04 us. Test each phase's low interval.
     for (unsigned i = 0; i < 3; ++i) {
-        if (awake && raw[i] > 20 && raw[i] < 4075 &&
-            drivers::current_window_valid(active_duty_[i], i == 2 ? 1U : 0U)) {
+        if (settled && current_zero_.valid() && raw[i] > 20 && raw[i] < 4075 &&
+            drivers::current_window_valid(duty[i], i == 2 ? 1U : 0U)) {
             s.current_mask = static_cast<std::uint8_t>(s.current_mask | (1U << i));
         }
     }
-    const auto errors = (ADC1->ISR | ADC2->ISR) & (ADC_ISR_OVR | ADC_ISR_JQOVF);
     if (errors) {
         roller_hardware.adc_errors = roller_hardware.adc_errors + 1;
         ADC1->ISR = ADC_ISR_OVR | ADC_ISR_JQOVF;
@@ -267,13 +281,13 @@ drive::Sample Board::current_sample() noexcept {
         s.current_mask = 0;
     }
     s.adc_ok = errors == 0;
-    s.current_angle_delay = 30.0e-6F; // sensor <5 us + current sample at ~25 us.
-    s.voltage_angle_delay = 80.0e-6F; // next PWM average at 75 us + sensor delay.
+    s.current_angle_delay = 30.0e-6F;  // sensor <5 us + current sample at ~25 us.
+    s.voltage_angle_delay = 130.0e-6F; // queued PWM average at 125 us + sensor delay.
     s.applied_voltage_valid = true;
     if (awake && (TIM1->CCER & TIM_CCER_CC1E)) {
-        s.applied_voltage = control::clarke({active_duty_[0] * s.bus_voltage / 4000.0F,
-                                             active_duty_[1] * s.bus_voltage / 4000.0F,
-                                             active_duty_[2] * s.bus_voltage / 4000.0F});
+        s.applied_voltage = control::clarke({duty[0] * s.bus_voltage / 4000.0F,
+                                             duty[1] * s.bus_voltage / 4000.0F,
+                                             duty[2] * s.bus_voltage / 4000.0F});
     }
     roller_hardware.sequence = roller_hardware.sequence + 1;
     __DMB();
@@ -288,10 +302,14 @@ drive::Sample Board::current_sample() noexcept {
     roller_hardware.vdda = vdda_;
     roller_hardware.temperature = temperature_;
     roller_hardware.current_mask = s.current_mask;
-    roller_hardware.offset_a = offsets_[0];
-    roller_hardware.offset_b = offsets_[1];
-    roller_hardware.offset_c = offsets_[2];
-    roller_hardware.offsets_valid = offsets_valid_;
+    roller_hardware.offset_a = offsets[0];
+    roller_hardware.offset_b = offsets[1];
+    roller_hardware.offset_c = offsets[2];
+    roller_hardware.offsets_valid = current_zero_.valid();
+    roller_hardware.zero_state = static_cast<std::uint32_t>(current_zero_.state());
+    roller_hardware.zero_reason = static_cast<std::uint32_t>(current_zero_.reason());
+    roller_hardware.zero_span = current_zero_.span();
+    roller_hardware.zero_elapsed = current_zero_.elapsed();
     roller_hardware.driver_awake = awake;
     roller_hardware.pwm_deferred = roller_pwm_deferred;
     __DMB();
@@ -330,10 +348,18 @@ void Board::apply(drive::Output output) noexcept {
     (void)output;
     gate_off();
 #else
-    if (!offsets_valid_) {
-        return; // Only startup current-zero acquisition, never a runtime lease.
+    if (output.stop || current_zero_.failed() || channels_.inhibit.load(std::memory_order_acquire)) {
+        current_zero_.fail(drivers::ZeroReason::cancelled);
+        request_pending_ = false;
+        enable_pending_ = false;
+        gate_off();
+        return;
+    }
+    if (!current_zero_.valid()) {
+        return; // Bounded startup acquisition. Explicit stop always takes precedence.
     }
     if (!output.enable || channels_.inhibit.load(std::memory_order_acquire)) {
+        request_pending_ = false;
         enable_pending_ = false;
         gate_off();
         return;
@@ -344,20 +370,23 @@ void Board::apply(drive::Output output) noexcept {
     if (!(DRV_ENABLE_GPIO_Port->ODR & DRV_ENABLE_Pin)) {
         HAL_GPIO_WritePin(DRV_ENABLE_GPIO_Port, DRV_ENABLE_Pin, GPIO_PIN_SET);
         wake_cycles_ = DWT->CYCCNT;
+        driver_settled_ = false;
         return;
     }
-    if (DWT->CYCCNT - wake_cycles_ < 800000) {
+    if (!driver_settled_) {
         return;
     }
     const auto ticks = [](float d) {
         return static_cast<std::uint16_t>(std::clamp(d, 0.0F, 1.0F) * 4000.0F);
     };
     const std::array<std::uint16_t, 3> abc{ticks(output.duty.a), ticks(output.duty.b), ticks(output.duty.c)};
-    if (write_pwm(abc)) {
-        pending_duty_ = abc;
-        duty_pending_ = true;
-        enable_pending_ = true;
-    }
+    // TIM1 now preempts this ISR. Publish all three phases atomically; its
+    // underflow ISR alone writes the preload registers and tracks their latch.
+    const auto mask = __get_PRIMASK();
+    __disable_irq();
+    requested_duty_ = abc;
+    request_pending_ = true;
+    __set_PRIMASK(mask);
 #endif
 }
 void Board::can_irq() noexcept {

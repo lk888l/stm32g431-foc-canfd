@@ -11,10 +11,27 @@ from pathlib import Path
 import socket
 import struct
 import subprocess
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parents[1]
 MODES = {"position": -1, "multi-position": 1, "velocity": 3, "torque": 4, "mit": 5}
+ZERO_REASONS = ("none", "offset outside range", "noisy zero", "phase zero mismatch",
+                "CSA unavailable", "cancelled")
+CALIBRATION_REASONS = ("none", "prerequisites not ready", "current feedback missing",
+                       "current polarity/phase response", "calibration current exceeded",
+                       "encoder/nonfinite input", "sweep travel/slip", "offset concentration",
+                       "return position or speed", "interrupted", "bus voltage")
+
+
+def require_current_feedback(state):
+    if state.get("no_motion"):
+        raise RuntimeError("Bringup firmware cannot run motor tests; flash Bench first")
+    if "offsets_valid" in state and not state["offsets_valid"]:
+        reason = state.get("zero_reason", 0)
+        label = ZERO_REASONS[reason] if reason < len(ZERO_REASONS) else str(reason)
+        raise RuntimeError(f"Current-zero acquisition failed or is incomplete: {label}. "
+                           "Inspect hardware diagnostics; fix the cause and reboot before motion.")
 
 
 def finite_between(value, low, high, label):
@@ -44,6 +61,7 @@ class Bench:
         self.state = self.symbols["roller_bench_state"]
         self.request = self.symbols["roller_bench_request"]
         self.port, self.node = port, node
+        self._guard_armed = False
 
     def __enter__(self):
         self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=2)
@@ -68,10 +86,22 @@ class Bench:
 
     def read(self, address, count):
         result = self.command(f"read_memory 0x{address:x} 32 {count}")
-        values = [int(word, 0) for word in result.split()]
+        try:
+            values = [int(word, 0) for word in result.split()]
+        except ValueError as error:
+            raise RuntimeError(f"SWD read at {address:#x} failed: {result}") from error
         if len(values) != count:
             raise RuntimeError("Incomplete SWD read: " + result)
         return values
+
+    def frozen_words(self, address, count):
+        previous = self.read(address, count)
+        for _ in range(4):
+            current = self.read(address, count)
+            if current == previous:
+                return current
+            previous = current
+        raise RuntimeError(f"Inconsistent frozen SWD words at {address:#x}")
 
     def write(self, address, values):
         words = " ".join(str(word) for word in values)
@@ -90,8 +120,8 @@ class Bench:
             sequence = self.read(self.state + 8, 1)[0]
             if sequence == old or sequence & 1:
                 continue
-            words = self.read(self.state, 31)
-            if words[:2] != [0x524C4142, 2]:
+            words = self.frozen_words(self.state, 31)
+            if words[0] != 0x524C4142 or words[1] not in (2, 3, 4, 5):
                 raise RuntimeError("Bench ABI mismatch: flash the matching Bench ELF")
             if words[2] != sequence:
                 continue
@@ -149,6 +179,24 @@ class Bench:
             result["cordic_max_error"] = struct.unpack(
                 "<f", struct.pack("<I", words[30])
             )[0]
+            if words[1] >= 3:
+                extra = self.frozen_words(self.state + 124, 17 if words[1] >= 4 else 16)
+                if self.read(self.state + 8, 1)[0] != sequence:
+                    continue
+                result.update(zip(("warnings", "encoder_missed", "current_predicted", "calibration_reason",
+                                   "calibration_ticks", "calibration_points"), extra[:6]))
+                result.update(zip(("calibration_concentration", "calibration_travel", "iq_target"),
+                                  struct.unpack("<3f", struct.pack("<3I", *extra[6:9]))))
+                result.update(zip(("offsets_valid", "zero_state", "zero_reason", "zero_span",
+                                   "driver_awake", "pwm_channels", "no_motion"), extra[9:]))
+                if words[1] >= 4:
+                    result["calibration_angle"] = struct.unpack("<f", struct.pack("<I", extra[16]))[0]
+                if words[1] >= 5:
+                    voltage = self.frozen_words(self.state + 192, 3)
+                    if self.read(self.state + 8, 1)[0] != sequence:
+                        continue
+                    result.update(zip(("voltage_a", "voltage_b", "voltage_c"),
+                                      struct.unpack("<3f", struct.pack("<3I", *voltage))))
             return result
         raise TimeoutError("Bench snapshot was not published")
 
@@ -166,6 +214,118 @@ class Bench:
         while self.read(self.rx + 20, 1)[0] != sequence:
             if time.monotonic() > deadline:
                 raise TimeoutError("RX mailbox was not consumed")
+
+    def arm_capture(self, kind=0):
+        if "roller_trace_kind" in self.symbols:
+            kind_address = self.symbols["roller_trace_kind"]
+            self.write(kind_address, [kind])
+            if self.frozen_words(kind_address, 1)[0] != kind:
+                raise RuntimeError("SWD capture mode write did not verify")
+        elif kind:
+            raise RuntimeError("Flash a Bench ELF with motion/peak capture support")
+        request = self.symbols["roller_trace_request"]
+        generation = (self.frozen_words(request, 1)[0] + 1) & 0xFFFFFFFF
+        self.write(request, [generation])
+        if self.frozen_words(request, 1)[0] != generation:
+            raise RuntimeError("SWD capture request did not verify")
+        return generation
+
+    def frozen_capture(self, generation, count, size, refresh=None):
+        ack = self.symbols["roller_trace_ack"]
+        deadline = time.monotonic() + 2
+        while self.read(ack, 1)[0] != generation or self.frozen_words(ack, 1)[0] != generation:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Trace capture did not complete")
+            if refresh:
+                refresh()
+            time.sleep(0.01)
+        if self.frozen_words(self.symbols["roller_trace_count"], 1)[0] != count:
+            raise RuntimeError("Trace ABI mismatch")
+        # dump_image uses the ST-Link block-memory path. read_memory's Tcl
+        # scalar loop is much slower for a full capture on HLA adapters.
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as stream:
+            path = Path(stream.name)
+        try:
+            previous = None
+            for _ in range(4):
+                if refresh:
+                    refresh()
+                path.write_bytes(b"")
+                self.command(f"dump_image {{{path.as_posix()}}} 0x{self.symbols['roller_trace_data']:x} {size}")
+                data = path.read_bytes()
+                if len(data) == size and data == previous:
+                    break
+                previous = data
+            else:
+                # A long adapter burst can contain a bad word. Re-read short
+                # immutable blocks and require agreement for each block.
+                chunks = []
+                address = self.symbols["roller_trace_data"]
+                for offset in range(0, size, 64):
+                    if refresh and offset % 512 == 0:
+                        refresh()
+                    words = self.frozen_words(address + offset, min(64, size-offset)//4)
+                    chunks.append(struct.pack(f"<{len(words)}I", *words))
+                data = b"".join(chunks)
+        finally:
+            path.unlink(missing_ok=True)
+        if (self.frozen_words(ack, 1)[0] != generation or
+                self.read(self.symbols["roller_trace_request"], 1)[0] != generation):
+            raise RuntimeError("Trace was replaced during readout")
+        return data
+
+    def capture(self, refresh=None):
+        """Capture 96 consecutive 1 kHz samples; hardware stays running."""
+        data = self.frozen_capture(self.arm_capture(), 96, 96 * 24, refresh)
+        rows = [dict(zip(("samples", "position", "velocity", "iq", "id", "iq_target"), values))
+                for values in struct.iter_unpack("<I5f", data)]
+        if any((b["samples"] - a["samples"]) & 0xFFFFFFFF != 20 for a, b in zip(rows, rows[1:])):
+            raise RuntimeError("Trace was replaced or contains nonconsecutive samples")
+        return rows
+
+    def capture_ticks(self, generation, intervals, stride):
+        first = self.frozen_words(self.symbols["roller_trace_first"], 1)[0]
+        last = self.frozen_words(self.symbols["roller_trace_last"], 1)[0]
+        if ((last - first) & 0xFFFFFFFF != intervals * stride or
+                self.read(self.symbols["roller_trace_request"], 1)[0] != generation):
+            raise RuntimeError("Trace was replaced or has a discontinuous time base")
+        return first, last
+
+    def motion_capture(self, refresh=None):
+        generation = self.arm_capture(1)
+        data = self.frozen_capture(generation, 768, 768 * 4, refresh)
+        words = self.frozen_words(self.symbols["roller_trace_origin"], 2)
+        origin, = struct.unpack("<q", struct.pack("<II", *words))
+        first, _ = self.capture_ticks(generation, 767, 20)
+        rows = []
+        position = origin
+        for i, (angle, velocity) in enumerate(struct.iter_unpack("<Hh", data)):
+            delta = ((angle - position + 8192) & 16383) - 8192
+            if abs(delta) > 1700 or (i == 0 and delta):
+                raise RuntimeError("Encoder discontinuity in motion capture")
+            position += delta
+            rows.append(dict(samples=(first + 20*i) & 0xFFFFFFFF, counts=position, velocity=velocity/512,
+                             ack=bool(angle & 0x4000), marked=bool(angle & 0x8000)))
+        return rows
+
+    def peak_capture(self, refresh=None):
+        generation = self.arm_capture(2)
+        data = self.frozen_capture(generation, 2000, 8 * 56, refresh)
+        first, last = self.capture_ticks(generation, 1999, 1)
+        peaks = []
+        for mask, values in enumerate(struct.iter_unpack("<II10f4H", data)):
+            frames, tick, sum2, max2, id_, iq, target, ia, ib, ic, angle, bus, a, b, c, _ = values
+            if frames:
+                if (((tick-first) & 0xFFFFFFFF) >= 2000 or max(a, b, c) > 4000 or not 0 <= angle < math.tau or
+                        not all(math.isfinite(v) for v in values[2:12]) or sum2 < max2 or
+                        not math.isclose(max2, id_**2+iq**2, abs_tol=1e-6)):
+                    raise RuntimeError("Invalid same-frame current peak")
+                peaks.append(dict(mask=mask, frames=frames, samples=tick, sum_squares=sum2, peak=math.sqrt(max2),
+                                  id=id_, iq=iq, iq_target=target, raw_abc=[ia, ib, ic],
+                                  electrical_angle=angle, bus=bus, ccr=[a, b, c]))
+        if sum(p["frames"] for p in peaks) != 2000:
+            raise RuntimeError("Nonconsecutive current capture")
+        return dict(first=first, last=last, peaks=peaks)
 
     def nmt(self, command):
         self.send(0, bytes([command, self.node]))
@@ -216,7 +376,14 @@ class Bench:
                     raise TimeoutError("Power did not turn off")
             self.nmt(128)
             self.sdo(0x6040, value=0, size=2)
+            if self._guard_armed:
+                self.write(self.symbols["roller_bench_guard"], [0])
+                self._guard_armed = False
         except BaseException:
+            if self._guard_armed:
+                # Leave the CPU running so the independent timeout can gate off
+                # after a lost SWD link, including a failed host stop command.
+                raise
             # Explicit stop fallback: halt first so the control ISR cannot wake
             # the driver again after a raw nSLEEP write. Resume requires operator action.
             self.command("halt")
@@ -235,6 +402,7 @@ class Bench:
     def prepare_mode(self, mode):
         self.stop()
         state = self.snapshot()
+        require_current_feedback(state)
         if state["calibration"] != 4:
             raise RuntimeError("Calibrate before enabling motion")
         if state["fault"]:
@@ -246,6 +414,12 @@ class Bench:
         return struct.unpack("<H", self.sdo(0x6041)[:2])[0]
 
     def activate(self):
+        if "roller_bench_guard" in self.symbols:
+            address = self.symbols["roller_bench_guard"]
+            self.write(address, [1])
+            if self.frozen_words(address, 1) != [1]:
+                raise RuntimeError("SWD motion guard did not arm")
+            self._guard_armed = True
         self.nmt(1)
         for controlword, expected in ((6, 0x21), (7, 0x23), (15, 0x27)):
             self.sdo(0x6040, value=controlword, size=2)
@@ -297,7 +471,7 @@ class Bench:
         for value, low, high, label in (
             (velocity, -5, 5, "MIT velocity"),
             (torque, -0.005, 0.005, "MIT feedforward torque"),
-            (kp, 0, 1, "MIT Kp"),
+            (kp, 0, 5, "MIT Kp"),
             (kd, 0, 0.1, "MIT Kd"),
         ):
             finite_between(value, low, high, label)
@@ -319,6 +493,12 @@ class Bench:
 
 
 def run_motion(bench, args, records):
+    bench.stop()
+    state = bench.snapshot()
+    require_current_feedback(state)
+    limit = getattr(args, "current_limit", 0.3)
+    finite_between(limit, 0.02, 1.4, "Bench current limit")
+    bench.sdo(0x6072, value=min(1000, int(1000 * limit / state["current_limit"])), size=2)
     details = {"operation": args.operation, "mode": MODES[args.operation]}
     if args.operation == "velocity":
         initial = bench.enable_velocity()
@@ -356,6 +536,7 @@ def run_motion(bench, args, records):
         motion_values = (state["position"], state["velocity"], state["iq"], state["id"])
         excessive_travel = args.operation != "velocity" and abs(state["position"] - initial["position"]) > 6
         if (state["fault"] or not all(map(math.isfinite, motion_values)) or
+                max(abs(state["iq"]), abs(state["id"])) > limit * 1.5 + 0.1 or
                 abs(state["velocity"]) > 7 or excessive_travel):
             raise RuntimeError(f"Motion trial aborted: {state}")
         if state["status"] & 0x6F != 0x27:
@@ -376,7 +557,10 @@ def main(argv=None):
     sub = parser.add_subparsers(dest="operation", required=True)
     for name in ("inspect", "stop", "fault-reset"):
         sub.add_parser(name)
-    sub.add_parser("calibrate").add_argument("--save", action="store_true")
+    sub.add_parser("cogging").add_argument("setting", choices=("on", "off"))
+    calibration = sub.add_parser("calibrate")
+    calibration.add_argument("--save", action="store_true")
+    calibration.add_argument("--slow", action="store_true", help="201.6 s bidirectional scan for cogging measurement; requires prior calibration")
     speed = sub.add_parser("velocity")
     speed.add_argument(
         "target", type=float, help="Unloaded bench target, -5 to +5 rev/s"
@@ -396,13 +580,19 @@ def main(argv=None):
     mit.add_argument("--relative", action="store_true", help="Interpret --position as displacement from initial position")
     mit.add_argument("--velocity", type=float, default=0, help="-5 to +5 rev/s")
     mit.add_argument("--torque", type=float, default=0, help="Feedforward torque, -0.005 to +0.005 Nm")
-    mit.add_argument("--kp", type=float, default=0.01, help="0 to 1 Nm/rev, quantized to 0.001")
+    mit.add_argument("--kp", type=float, default=0.01, help="0 to 5 Nm/rev, quantized to 0.001")
     mit.add_argument("--kd", type=float, default=0.002, help="0 to 0.1 Nm/(rev/s), quantized to 0.001")
     mit.add_argument("--seconds", type=float, default=3, help="0.1 to 30 seconds")
+    for motion in (speed, torque, mit):
+        motion.add_argument("--current-limit", type=float, default=0.3, help="Bench limit in A, default 0.3")
+    for name in ("position", "multi-position"):
+        sub.choices[name].add_argument("--current-limit", type=float, default=0.3,
+                                      help="Bench limit in A, default 0.3")
     args = parser.parse_args(argv)
     try:
         if args.operation in MODES:
             finite_between(args.seconds, 0.1 if args.operation in ("torque", "mit") else 1, 30, "Duration")
+            finite_between(args.current_limit, 0.02, 1.4, "Bench current limit")
         if args.operation == "velocity":
             finite_between(args.target, -5, 5, "Velocity")
         elif args.operation == "torque":
@@ -413,7 +603,7 @@ def main(argv=None):
         elif args.operation == "mit":
             for value, low, high, label in (
                 (args.velocity, -5, 5, "MIT velocity"), (args.torque, -0.005, 0.005, "MIT torque"),
-                (args.kp, 0, 1, "MIT Kp"), (args.kd, 0, 0.1, "MIT Kd"),
+                (args.kp, 0, 5, "MIT Kp"), (args.kd, 0, 0.1, "MIT Kd"),
             ):
                 finite_between(value, low, high, label)
             if args.position is not None:
@@ -430,19 +620,29 @@ def main(argv=None):
         try:
             if args.operation == "fault-reset":
                 bench.reset_fault()
+            elif args.operation == "cogging":
+                bench.stop()
+                bench.sdo(0x2100, 1, 0x206E6F63 if args.setting == "on" else 0x66666F63)
             elif args.operation == "calibrate":
                 bench.stop()
-                bench.sdo(0x2100, 1, 0x696C6163)
+                state = bench.snapshot()
+                records.append(dict(state, seconds=0))
+                require_current_feedback(state)
+                bench.sdo(0x2100, 1, 0x776F6C73 if args.slow else 0x696C6163)
                 start = time.monotonic()
                 started = False
-                while time.monotonic() - start < 9:
+                while time.monotonic() - start < (220 if args.slow else 25):
                     state = bench.snapshot()
                     records.append(dict(state, seconds=time.monotonic() - start))
                     if state["fault"] or state["calibration"] == 5:
-                        raise RuntimeError(f"Calibration failed: {state}")
+                        reason = state.get("calibration_reason", 0)
+                        label = CALIBRATION_REASONS[reason] if reason < len(CALIBRATION_REASONS) else str(reason)
+                        raise RuntimeError(f"Calibration failed ({label}): {state}")
                     started |= state["calibration"] in (1, 2, 3)
                     if started and state["calibration"] == 4:
                         break
+                    if args.slow and len(records) % 200 == 0:
+                        print(f"Scan {time.monotonic() - start:.1f} s, position {state['position']:.4f} rev", flush=True)
                     time.sleep(0.02)
                 else:
                     raise TimeoutError("Calibration did not finish")

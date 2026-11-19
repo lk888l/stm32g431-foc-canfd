@@ -72,6 +72,9 @@ void control_ready() {
     if (auto fault = channels.asynchronous_fault.exchange(0, std::memory_order_acq_rel); fault) {
         controller.trip(static_cast<roller::drive::Fault>(fault));
     }
+    if (channels.commands.latest(incoming_command)) {
+        controller.command(incoming_command);
+    }
     const auto sample = board.sample();
 #ifdef ROLLER_BENCH
     const auto sampled = DWT->CYCCNT;
@@ -88,6 +91,9 @@ void control_ready() {
     if (count % 20 == 0) {
         (void)channels.telemetry.push(controller.telemetry());
     }
+#ifdef ROLLER_BENCH
+    roller::bench::trace(controller, incoming_command.get(), sample, board.sampled_duty());
+#endif
     const auto elapsed = DWT->CYCCNT - start;
     if (elapsed > channels.isr_max_cycles.load(std::memory_order_relaxed)) {
         channels.isr_max_cycles.store(elapsed, std::memory_order_relaxed);
@@ -99,12 +105,7 @@ extern "C" void roller_app_encoder_trigger() {
     if (!board.sampling()) {
         return;
     }
-    if (auto fault = channels.asynchronous_fault.exchange(0, std::memory_order_acq_rel); fault) {
-        controller.trip(static_cast<roller::drive::Fault>(fault));
-    }
-    if (channels.commands.latest(incoming_command)) {
-        controller.command(incoming_command);
-    }
+    // No Controller access here: TIM1 may preempt the ADC control calculation.
     board.encoder_trigger();
 }
 extern "C" void HAL_ADC_ConvHalfCpltCallback(ADC_HandleTypeDef* adc) {

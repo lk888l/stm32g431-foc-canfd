@@ -16,8 +16,12 @@ from stlink_bench import Bench
 
 class HardwareProbe(Bench):
     def __init__(self, elf, port=6666):
-        output = subprocess.check_output(["arm-none-eabi-nm", "--defined-only", str(elf)], text=True)
-        self.symbols = {p[2]: int(p[0], 16) for line in output.splitlines() if len(p := line.split()) == 3}
+        output = subprocess.check_output(["arm-none-eabi-nm", "-S", "--defined-only", str(elf)], text=True)
+        self.symbols = {p[3]: int(p[0], 16) for line in output.splitlines() if len(p := line.split()) == 4}
+        sizes = {p[3]: int(p[1], 16) for line in output.splitlines() if len(p := line.split()) == 4}
+        self.words = sizes["roller_hardware_snapshot"] // 4
+        if self.words not in (27, 31):
+            raise RuntimeError("Unsupported hardware diagnostic layout")
         self.port = port
         self.state = self.symbols["roller_hardware_snapshot"]
         self.request = self.symbols["roller_hardware_request"]
@@ -31,7 +35,7 @@ class HardwareProbe(Bench):
             if time.monotonic() > deadline:
                 raise TimeoutError("MCU did not publish hardware diagnostics")
             time.sleep(0.002)
-        words = self.read(self.state, 27)
+        words = self.read(self.state, self.words)
         if self.read(self.ack, 1)[0] != request:
             raise RuntimeError("Another diagnostic reader replaced this snapshot")
         fields = (
@@ -39,6 +43,7 @@ class HardwareProbe(Bench):
             "adc_a", "adc_b", "adc_c", "adc_bus", "adc_ntc", "current_mask", "adc_errors", "missed_frames",
             "angle", "bus", "vdda", "temperature", "offset_a", "offset_b", "offset_c",
             "offsets_valid", "driver_awake", "no_motion", "pwm_deferred", "warnings", "can_loopback",
+            "zero_state", "zero_reason", "zero_span", "zero_elapsed",
         )
         values = words[:14] + list(struct.unpack("<7f", struct.pack("<7I", *words[14:21]))) + words[21:]
         result = dict(zip(fields, values))

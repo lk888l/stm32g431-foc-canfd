@@ -25,6 +25,7 @@ enum class Fault : std::uint16_t {
     undervoltage = 0x3220,
     temperature = 0x4210,
     driver = 0x5000,
+    current_sense = 0x5210,
     timing = 0x5300,
     configuration = 0x6320,
     encoder = 0x7340,
@@ -43,6 +44,19 @@ enum Warning : std::uint32_t {
     math_warning = 128U
 };
 enum class Calibration : std::uint8_t { required, align, sweep, settle, complete, failed };
+enum class CalibrationReason : std::uint8_t {
+    none,
+    not_ready,
+    current_feedback,
+    phase_response,
+    current_limit,
+    encoder,
+    travel,
+    concentration,
+    return_position,
+    interrupted,
+    bus_voltage
+};
 struct MotorConfig {
     float electrical_offset{};
     float torque_constant{0.23F}; // 4015 datasheet; line-current dq convention still needs measurement.
@@ -57,6 +71,8 @@ struct Command {
     std::int16_t torque{};
     Mode mode{Mode::none};
     bool operational{}, network_ok{true}, calibration_permitted{true};
+    bool calibration_slow{};
+    bool cogging_enabled{true};
     // Revolutions and revolutions/second. Mode 1 uses the continuous encoder
     // position; mode -1 wraps absolute/relative requests to the nearest turn.
     float position{}, velocity{};
@@ -87,10 +103,14 @@ struct Sample {
     float current_angle_delay{}, voltage_angle_delay{};
     control::AlphaBeta applied_voltage{};
     bool applied_voltage_valid{};
+    bool current_zero_failed{};
+    bool power_ready{true}; // Board wake delay; defaults true for portable callers.
+    std::uint16_t encoder_counts{control::encoder_cpr}; // Angle-only callers use the sentinel.
 };
 struct Output {
     control::Abc duty{0.5F, 0.5F, 0.5F};
     bool enable{};
+    bool stop{}; // Also cancel startup zero acquisition on explicit NMT stop/fault.
 };
 struct Telemetry {
     std::uint32_t samples{}, command_sequence{}, warnings{}, encoder_missed{}, current_predicted{};
@@ -101,6 +121,10 @@ struct Telemetry {
     Mode mode{};
     Calibration calibration{Calibration::required};
     MotorConfig config{};
+    CalibrationReason calibration_reason{};
+    std::uint32_t calibration_ticks{}, calibration_points{};
+    float calibration_concentration{}, calibration_travel{}, iq_target{};
+    float calibration_angle{}, current_electrical_angle{};
 };
 class Controller {
   public:
@@ -120,6 +144,10 @@ class Controller {
     [[nodiscard]] const Telemetry& telemetry() const noexcept {
         return telemetry_;
     }
+    [[nodiscard]] std::int64_t position_counts() const noexcept {
+        const auto counts = tracker_.counts();
+        return config_.direction < 0 ? -counts : counts;
+    }
     void trip(Fault fault) noexcept {
         if (fault_ == Fault::none) {
             fault_ = fault;
@@ -130,8 +158,10 @@ class Controller {
 
   private:
     Output calibration_step(const Sample& sample) noexcept;
+    Output fail_calibration(CalibrationReason reason) noexcept;
     void outer_step(const Sample& sample) noexcept;
     void reset_loops() noexcept;
+    float cogging_feedforward(const Sample& sample) const noexcept;
     MotorConfig config_;
     control::Trigonometry trig_;
     Command command_{};
@@ -142,19 +172,23 @@ class Controller {
                       control::motor_resistance * control::tau * control::current_bandwidth},
         q_pi_{control::motor_inductance * control::tau * control::current_bandwidth,
               control::motor_resistance * control::tau * control::current_bandwidth},
-        velocity_pi_{0.06F, 0.15F};
+        velocity_pi_{0.03F, 3.0F};
     control::CurrentObserver observer_{};
     Output previous_output_{};
     std::uint32_t missed_angles_{}, calibration_segments_{}, offset_count_{};
-    float last_angle_{}, calibration_segment_start_{}, offset_sine_{}, offset_cosine_{};
+    float last_angle_{}, offset_sine_{}, offset_cosine_{};
     std::int8_t calibration_direction_{};
     bool angle_initialized_{};
     Fault fault_{};
     Calibration calibration_{Calibration::required};
     std::uint32_t ticks_{}, command_age_{}, calibration_tick_{}, calibration_seen_{};
     std::uint16_t previous_cw_{}, following_ticks_{};
-    float iq_target_{}, velocity_setpoint_{}, position_setpoint_{}, target_position_{};
-    float calibration_start_{};
+    float iq_target_{}, iq_feedback_{}, velocity_setpoint_{};
+    control::PositionProfile profile_{};
+    std::int64_t calibration_start_{}, calibration_segment_start_{};
+    float calibration_d_sum_{}, calibration_q_sum_{}, calibration_phase_sum_{};
+    std::uint32_t calibration_current_samples_{}, calibration_missing_{}, calibration_overcurrent_{};
     bool setpoint_ack_{}, initialized_{};
+    bool calibration_slow_{};
 };
 } // namespace roller::drive

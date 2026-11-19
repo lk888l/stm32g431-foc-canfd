@@ -1,0 +1,731 @@
+{
+  "date": "2026-11-18",
+  "fit": {
+    "base_sha256": "07ad29e5d931b540e1848ec21ef61108ec771ff116c52072beb6d950f8562993",
+    "train": {
+      "final-positive-01.json": "4e9a4c3f09b85082ba0becf1af7f83206ad6206f74cf2d50704dcf426dd31244",
+      "final-negative-01.json": "8d8d999ebe03b33e2b35f8ec42a9a837aaa86e17f61e64c8d26758c2d1d231a7",
+      "stock-pos6.json": "d93d3bdf70d8ef6767c3b8e1295173eec3a4951e81bb3d5be58c78a2c3cfc7ed",
+      "stock-neg6.json": "6abcfedf11f1c15b301abdafaef8531d2282901180ab03b0eafb0da26688311f"
+    },
+    "validation": [
+      {
+        "file": "stock-pos12.json",
+        "sha256": "933c90e0409e242c7d501f4ff183f114a0a675e1a47ef3a7667b500d3dcda32b",
+        "speed": 0.2,
+        "before_a": 0.035496948150533836,
+        "after_a": 0.010492838965194415
+      },
+      {
+        "file": "stock-neg12.json",
+        "sha256": "d632033fcc728ac76b2ee3aab6260fe4c2d5597e5d8490a3ab75e0504c037f67",
+        "speed": -0.2,
+        "before_a": 0.03668404227160243,
+        "after_a": 0.01031953294453063
+      }
+    ],
+    "fraction": 0.8,
+    "forward_bias_a": 0.046459253878341614,
+    "reverse_bias_a": -0.045996469623690424,
+    "direction_odd_a": 0.04622786175101602,
+    "direction_even_a": 0.00023139212732559492,
+    "correction_peak_a": 0.0608,
+    "correction_rms_a": 0.027770015392086286,
+    "candidate_peak_a": 0.10016000000000001,
+    "candidate_mean_a": 4.6874999999960143e-07,
+    "dominant_orders": [
+      {
+        "order": 2,
+        "amplitude_a": 0.04344646467639907
+      },
+      {
+        "order": 1,
+        "amplitude_a": 0.014662247718426431
+      },
+      {
+        "order": 48,
+        "amplitude_a": 0.01257130012187338
+      },
+      {
+        "order": 22,
+        "amplitude_a": 0.0072627509163379865
+      },
+      {
+        "order": 66,
+        "amplitude_a": 0.005017783265372318
+      },
+      {
+        "order": 44,
+        "amplitude_a": 0.003988085126062061
+      },
+      {
+        "order": 4,
+        "amplitude_a": 0.0038745055154005554
+      },
+      {
+        "order": 24,
+        "amplitude_a": 0.003523603518648322
+      }
+    ]
+  },
+  "speed": [
+    {
+      "target_rpm": 6.0,
+      "before": {
+        "std_10ms_rpm": 1.1880855219578008,
+        "std_estimator_rpm": 1.7343666109227331,
+        "mean_error_rpm": -0.049981142320525695,
+        "steady_samples": 8736,
+        "encoder_missed_change": 0,
+        "isr_max": 7745
+      },
+      "installed": {
+        "std_10ms_rpm": 0.6925261176463227,
+        "std_estimator_rpm": 1.4782056931882748,
+        "mean_error_rpm": -0.013895760027004267,
+        "steady_samples": 14112,
+        "encoder_missed_change": 0,
+        "isr_max": 6809
+      }
+    },
+    {
+      "target_rpm": -6.0,
+      "before": {
+        "std_10ms_rpm": 1.2152815779773753,
+        "std_estimator_rpm": 1.7426609241775475,
+        "mean_error_rpm": -0.03858596831744221,
+        "steady_samples": 10243,
+        "encoder_missed_change": 0,
+        "isr_max": 7745
+      },
+      "installed": {
+        "std_10ms_rpm": 0.6717181668397826,
+        "std_estimator_rpm": 1.460995156497143,
+        "mean_error_rpm": 0.029969989023564403,
+        "steady_samples": 14112,
+        "encoder_missed_change": 0,
+        "isr_max": 6784
+      }
+    },
+    {
+      "target_rpm": 12.0,
+      "before": {
+        "std_10ms_rpm": 2.0005984763568176,
+        "std_estimator_rpm": 2.3927290428421797,
+        "mean_error_rpm": 0.11374832891878905,
+        "steady_samples": 4512,
+        "encoder_missed_change": 0,
+        "isr_max": 7745
+      },
+      "installed": {
+        "std_10ms_rpm": 1.0438617998842343,
+        "std_estimator_rpm": 1.64280721418831,
+        "mean_error_rpm": 0.02386700556698096,
+        "steady_samples": 5280,
+        "encoder_missed_change": 0,
+        "isr_max": 6809
+      }
+    },
+    {
+      "target_rpm": -12.0,
+      "before": {
+        "std_10ms_rpm": 2.0969231501205097,
+        "std_estimator_rpm": 2.4484649627511472,
+        "mean_error_rpm": -0.033628265580368244,
+        "steady_samples": 4320,
+        "encoder_missed_change": 0,
+        "isr_max": 7745
+      },
+      "installed": {
+        "std_10ms_rpm": 1.1351309777475471,
+        "std_estimator_rpm": 1.6845336975162142,
+        "mean_error_rpm": 0.002966592461220996,
+        "steady_samples": 6409,
+        "encoder_missed_change": 0,
+        "isr_max": 6809
+      }
+    },
+    {
+      "target_rpm": 60.0,
+      "before": {
+        "std_10ms_rpm": 2.398055538798818,
+        "std_estimator_rpm": 4.286625385400427,
+        "mean_error_rpm": -0.0799333583563544,
+        "steady_samples": 1920,
+        "encoder_missed_change": 0,
+        "isr_max": 7745
+      },
+      "installed": {
+        "std_10ms_rpm": 1.0316364149463584,
+        "std_estimator_rpm": 3.3720127334448033,
+        "mean_error_rpm": -0.01002691991451643,
+        "steady_samples": 3441,
+        "encoder_missed_change": 0,
+        "isr_max": 6809
+      }
+    },
+    {
+      "target_rpm": -60.0,
+      "before": {
+        "std_10ms_rpm": 2.031218511641781,
+        "std_estimator_rpm": 3.8583969977342973,
+        "mean_error_rpm": -0.2399003293027846,
+        "steady_samples": 2186,
+        "encoder_missed_change": 0,
+        "isr_max": 7745
+      },
+      "installed": {
+        "std_10ms_rpm": 1.0479376418883886,
+        "std_estimator_rpm": 3.3296526585182717,
+        "mean_error_rpm": 0.04951195844582479,
+        "steady_samples": 3360,
+        "encoder_missed_change": 0,
+        "isr_max": 6809
+      }
+    }
+  ],
+  "current": {
+    "900": {
+      "frames": 64000,
+      "windows": 32,
+      "plateau_mean_rpm": 899.9975071540721,
+      "by_valid_phases": {
+        "1": {
+          "frames": 260,
+          "percent": 0.40625,
+          "max_a": 0.24943830302115658,
+          "rms_a": 0.1164611426036887
+        },
+        "2": {
+          "frames": 50886,
+          "percent": 79.509375,
+          "max_a": 0.6512060695336047,
+          "rms_a": 0.18100678458046357
+        },
+        "3": {
+          "frames": 12854,
+          "percent": 20.084375,
+          "max_a": 0.34613801789316817,
+          "rms_a": 0.12172236487780425
+        }
+      },
+      "worst": {
+        "mask": 5,
+        "frames": 637,
+        "samples": 1784125,
+        "sum_squares": 20.854263305664062,
+        "peak": 0.6512060695336047,
+        "id": 0.1275932341814041,
+        "iq": 0.6385838389396667,
+        "iq_target": 0.15246173739433289,
+        "raw_abc": [
+          0.1596924364566803,
+          0.22076770663261414,
+          -0.6265872716903687
+        ],
+        "electrical_angle": 6.232643127441406,
+        "bus": 19.374208450317383,
+        "ccr": [
+          2250,
+          3827,
+          172
+        ],
+        "angle_deg": 357.10414641361064,
+        "duty_percent": [
+          56.25,
+          95.675,
+          4.3
+        ],
+        "active_voltage_utilization": 0.9166069222954843
+      }
+    },
+    "-900": {
+      "frames": 64000,
+      "windows": 32,
+      "plateau_mean_rpm": -900.0019834761791,
+      "by_valid_phases": {
+        "1": {
+          "frames": 108,
+          "percent": 0.16875,
+          "max_a": 0.23581963209654672,
+          "rms_a": 0.13470833296623635
+        },
+        "2": {
+          "frames": 51513,
+          "percent": 80.4890625,
+          "max_a": 0.7836102500083519,
+          "rms_a": 0.18110106886336433
+        },
+        "3": {
+          "frames": 12379,
+          "percent": 19.3421875,
+          "max_a": 0.3528240879747389,
+          "rms_a": 0.12291702888185659
+        }
+      },
+      "worst": {
+        "mask": 5,
+        "frames": 614,
+        "samples": 2331314,
+        "sum_squares": 20.195018768310547,
+        "peak": 0.7836102500083519,
+        "id": 0.44450148940086365,
+        "iq": -0.6453397870063782,
+        "iq_target": -0.19578199088573456,
+        "raw_abc": [
+          -0.46497324109077454,
+          -0.48471033573150635,
+          -0.31375887989997864
+        ],
+        "electrical_angle": 3.173675060272217,
+        "bus": 19.241167068481445,
+        "ccr": [
+          1504,
+          3975,
+          24
+        ],
+        "angle_deg": 181.8381864995252,
+        "duty_percent": [
+          37.6,
+          99.375,
+          0.6
+        ],
+        "active_voltage_utilization": 0.9980531465474839
+      }
+    }
+  },
+  "spectrum": [
+    {
+      "target_rpm": 300.0,
+      "firmware": "installed",
+      "bin_hz": 1.3020833333333333,
+      "band_80_100_rms_rpm": 5.120658069921718,
+      "band_peak_hz": 89.84375,
+      "largest_ac_line_hz": 109.375,
+      "encoder_1ms_band_rms_rpm": 5.191667752367638,
+      "encoder_10ms_band_rms_rpm": 0.5019994695738687
+    },
+    {
+      "target_rpm": 360.0,
+      "firmware": "installed",
+      "bin_hz": 1.3020833333333333,
+      "band_80_100_rms_rpm": 3.2457095948833325,
+      "band_peak_hz": 96.35416666666666,
+      "largest_ac_line_hz": 108.07291666666666,
+      "encoder_1ms_band_rms_rpm": 3.321879518739998,
+      "encoder_10ms_band_rms_rpm": 0.1850460123514347
+    },
+    {
+      "target_rpm": 420.0,
+      "firmware": "installed",
+      "bin_hz": 1.3020833333333333,
+      "band_80_100_rms_rpm": 2.3315545964523903,
+      "band_peak_hz": 84.63541666666666,
+      "largest_ac_line_hz": 153.64583333333331,
+      "encoder_1ms_band_rms_rpm": 2.3601058795164773,
+      "encoder_10ms_band_rms_rpm": 0.31528655140364953
+    }
+  ],
+  "dynamics": {
+    "step-pos": {
+      "target_counts": 2625162,
+      "max_overshoot_deg": 0.02197265625,
+      "within_0p1deg_ms": 237,
+      "final_error_deg": 0.02197265625,
+      "observed_ms": 671
+    },
+    "step-neg": {
+      "target_counts": 2624161,
+      "max_overshoot_deg": 0.02197265625,
+      "within_0p1deg_ms": 235,
+      "final_error_deg": -0.02197265625,
+      "observed_ms": 672
+    },
+    "rev-pos": {
+      "target_rpm": -60.0,
+      "overshoot_10ms_rpm": 2.255859375,
+      "overshoot_estimator_rpm": 9.0234375,
+      "within_3rpm_ms": 199,
+      "observed_ms": 562
+    },
+    "rev-neg": {
+      "target_rpm": 60.0,
+      "overshoot_10ms_rpm": 2.6220703125,
+      "overshoot_estimator_rpm": 7.96875,
+      "within_3rpm_ms": 199,
+      "observed_ms": 671
+    },
+    "pulse-pos": {
+      "command_nm": 0.0046,
+      "pulse_ms": 172,
+      "pre_pulse_counts": 3740225,
+      "max_excursion_deg": 0.1318359375,
+      "left_0p1deg": true,
+      "return_within_0p1deg_ms": 5,
+      "final_error_deg": 0.0,
+      "observed_after_release_ms": 502
+    },
+    "pulse-neg": {
+      "command_nm": -0.0046,
+      "pulse_ms": 187,
+      "pre_pulse_counts": 3740225.0,
+      "max_excursion_deg": 0.1318359375,
+      "left_0p1deg": true,
+      "return_within_0p1deg_ms": 6,
+      "final_error_deg": -0.0439453125,
+      "observed_after_release_ms": 484
+    }
+  },
+  "mit": [
+    {
+      "target_deg": 45.0,
+      "approach": 1,
+      "without_deg": [
+        2.7685546875,
+        2.74658203125
+      ],
+      "with_deg": [
+        0.72509765625,
+        0.791015625
+      ]
+    },
+    {
+      "target_deg": 45.0,
+      "approach": -1,
+      "without_deg": [
+        4.4384765625,
+        4.41650390625
+      ],
+      "with_deg": [
+        1.3623046875,
+        1.38427734375
+      ]
+    },
+    {
+      "target_deg": 225.0,
+      "approach": 1,
+      "without_deg": [
+        1.6259765625,
+        1.58203125
+      ],
+      "with_deg": [
+        0.4833984375,
+        0.41748046875
+      ]
+    },
+    {
+      "target_deg": 225.0,
+      "approach": -1,
+      "without_deg": [
+        4.8779296875,
+        4.85595703125
+      ],
+      "with_deg": [
+        1.42822265625,
+        1.494140625
+      ]
+    }
+  ],
+  "long_travel": {
+    "net_turns": 10007.112731933594,
+    "run_s": 843.2660000000005,
+    "start_counts": 4742,
+    "end_counts": 163961277,
+    "segments": 1,
+    "samples": 5832,
+    "observed_faults": [
+      0
+    ],
+    "missed": 0,
+    "mcu_temp_max_c": 32.0,
+    "peak_sampled_a": 0.3458926441088719,
+    "probes": [
+      {
+        "step_counts": 17,
+        "target_counts": 163961288,
+        "tail_error_counts": [
+          1,
+          1
+        ]
+      },
+      {
+        "step_counts": -17,
+        "target_counts": 163961258,
+        "tail_error_counts": [
+          0,
+          0
+        ]
+      },
+      {
+        "step_counts": 1,
+        "target_counts": 163961269,
+        "tail_error_counts": [
+          0,
+          1
+        ]
+      },
+      {
+        "step_counts": -1,
+        "target_counts": 163961265,
+        "tail_error_counts": [
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "guarded_stop": 0.5469999999995707,
+  "acceptance_passed": 10,
+  "verification": {
+    "program_matches": true,
+    "parameters_match": true,
+    "binary_sha256": "1830eaba79ea8d8ab579def650955c391a443fc7920c9ac442fcf6c012f97ef9",
+    "parameter_sha256": "dc29ddc4ce88882db952ac0945c804e4207f3bd7c52d753ed5ba18811600ef24",
+    "last_motion_boot_isr_max": 6647,
+    "encoder_missed": 0,
+    "reboot_offset": 3.1301207542419434,
+    "reboot_calibration": 4,
+    "reboot_zero_valid": 1,
+    "final_fault": 0,
+    "final_pb10": 0,
+    "final_ccer_channels": 0,
+    "final_velocity": 0.0,
+    "max_isr_cycles_during_installed_trials": 7400
+  },
+  "raw_sha256": {
+    ".work/motor-response-20261118/stock-pos6.json": "d93d3bdf70d8ef6767c3b8e1295173eec3a4951e81bb3d5be58c78a2c3cfc7ed",
+    ".work/motor-response-20261118/asbuilt-new-pos6.json": "f872b11f85ecfeaf34a4b428feaaa6e9b2a9a799cfbffc8a96b172a2ef0eb02d",
+    ".work/motor-response-20261118/stock-neg6.json": "6abcfedf11f1c15b301abdafaef8531d2282901180ab03b0eafb0da26688311f",
+    ".work/motor-response-20261118/asbuilt-neg6.json": "9412bad62169298eeb6672093c9bd920d707258073234ba5c68406371f054283",
+    ".work/motor-response-20261118/stock-pos12.json": "933c90e0409e242c7d501f4ff183f114a0a675e1a47ef3a7667b500d3dcda32b",
+    ".work/motor-response-20261118/asbuilt-new-pos12.json": "3525c67549e20fbcc155e3cab5f1dc315509ea01b96d5663b584ed6784cacb96",
+    ".work/motor-response-20261118/stock-neg12.json": "d632033fcc728ac76b2ee3aab6260fe4c2d5597e5d8490a3ab75e0504c037f67",
+    ".work/motor-response-20261118/asbuilt-new-neg12.json": "2cc7c732ea6ef27f50bb44a7547d5d2203da0d467a88a7b0ffe04ffc95f76f73",
+    ".work/motor-response-20261118/stock-pos60.json": "d59ced242c34587139359b4411ece2c572f3f9a74e94624f7aebe0595c28e514",
+    ".work/motor-response-20261118/asbuilt-new-pos60.json": "757a240f47c3c23807a62e91973b26bd29cf9152896cf4944876aa56cdf34b92",
+    ".work/motor-response-20261118/stock-neg60.json": "d644d0134247f7282bc9e67445ba0ebf36321e8f5aed450e8b244696b48a7b16",
+    ".work/motor-response-20261118/asbuilt-new-neg60.json": "acb6682dd1777e12ad4fb0dfb5f2aed7c535b73dd943474a2ee62cf879700a5f",
+    ".work/motor-response-20261118/asbuilt-peaks-pos900-2.json": "2d5a6ba2c7dde15ecafe4c63cc0578d6e2157b230529f9d180381a1454a43dfd",
+    ".work/motor-response-20261118/asbuilt-peaks-neg900.json": "26ac1cee2c5dc61e12e72fde19a8a451be0bb192e384bac5d03524f81a1ec845",
+    ".work/motor-response-20261118/asbuilt-spectrum300.json": "dbec6ad8d4dd54a9e69a977e5be305bd30fa5ca14927ee4e21e4afd130700ae8",
+    ".work/motor-response-20261118/asbuilt-final-spectrum360.json": "6391387b8e4aa1dca529cc26559159d2e8f2a6ac47c3585e89e9eef139d39d3f",
+    ".work/motor-response-20261118/asbuilt-spectrum420-3.json": "f5e5bf33338e3b7228a5d0f9aa6165d47f11bb31a7addb9ad3c1d83a4a884c09",
+    ".work/motor-response-20261118/asbuilt-final-step-pos.json": "ca0d3b410a9f83e7be8119dad2709a2489d142fdaa768259a5434da12a8ccdaa",
+    ".work/motor-response-20261118/asbuilt-final-step-neg.json": "133fe0ff48498089dfcd5b908c5bdd294700efdba4fa4c15e6e55b170c06eea2",
+    ".work/motor-response-20261118/asbuilt-final-rev-pos.json": "1ab7482e9dab530d533f981f2a83dc6091b8c34d4de262b9399d27acffd9eeb5",
+    ".work/motor-response-20261118/asbuilt-final-rev-neg.json": "916d844ef70e6605e08a7afa4cf52996ee936a8e1f29692954bbf43cc22848e0",
+    ".work/motor-response-20261118/asbuilt-final-pulse-pos.json": "810eb120d87cecbb82bf256ca218f1ce8945a23ae55a765c694445c043746f85",
+    ".work/motor-response-20261118/asbuilt-final-pulse-neg.json": "8657108dfa3ec1c01a98a90348901b67294cf968c31e87ddf3ca9f5a60ec2fdf",
+    ".work/motor-response-20261118/mit-comparison.json": "61989535f061502c23ee0f78c272c2d854fb0774a75be045ad095ffe75bf8cb7",
+    ".work/motor-response-20261118/long-travel.json": "6b493c47c3b742430815904a88ab4f3698ac06b3bc9112bbd2dca1a0805f0e6f",
+    ".work/motor-response-20261118/installed-acceptance.json": "6140436fc5e7072dc5d5f73321bdf7c394405849d2e4a8cee3e39721feaa8925",
+    ".work/motor-response-20261118/final-verification.json": "62a68cda7d4d113fa2e6df77349c1c0b57023fe4480696b6b6a4a47a75dfe69f",
+    ".work/motor-response-20261118/acceptance-verification.json": "1d3e93e21e4bc7941484149d35aaf7b3660d4ddec8e61e62f9bd0fd818fe7578",
+    ".work/motor-response-20261118/motor-residual-fit-20261118.json": "96fa702948438507b4e8c1e3ece4bc873a67ec7bdb545099b7e82ac4565a8b9a",
+    ".work/motor-response-20261118/guard.json": "0c139e169fd75226f7033f3edfbdfef2e16d125d7ccbe8c917738ca0c4acef6d",
+    ".work/motor-response-20261118/rev60.json": "e5cba367a26c40634d99addf4364648681d82278afafd5fe1b71c84594a9cfd7",
+    ".work/motor-response-20261118/revneg60.json": "09ba3fe11a1f5d7cd0b0cacf310d7b0397e671bac2896da5f6fe18e55d65b68c",
+    ".work/motor-response-20261118/spec360.json": "2bd511643183c91a8e5241eaccfa70ca353d217145122d02466f7521b8ea27e9",
+    ".work/motor-response-20261118/peaks-pos900.json": "8baeee2851c88b823f42226c78ef9ab2b9762250fd420ad383e5b93f56f0b394",
+    ".work/motor-response-20261118/peaks-neg900.json": "fdf4f60a7f72c228c76904944899251049cb6169b247f5bcfac0000475243b0a",
+    ".work/motor-performance-20261117/final-positive-01.json": "4e9a4c3f09b85082ba0becf1af7f83206ad6206f74cf2d50704dcf426dd31244",
+    ".work/motor-performance-20261117/final-negative-01.json": "8d8d999ebe03b33e2b35f8ec42a9a837aaa86e17f61e64c8d26758c2d1d231a7",
+    ".work/motor-response-20261118/installed.bin": "1830eaba79ea8d8ab579def650955c391a443fc7920c9ac442fcf6c012f97ef9",
+    ".work/motor-response-20261118/refined.bin": "25d9208bfce886590ecc57e7a73c12bb308bd19a9140052ffc3e0b7ed6ba8f13",
+    ".work/motor-response-20261118/control.bin": "923917997edf881d2f327de5864b533c73ab142cd9c684d2ca634f594d64d12f"
+  },
+  "original_map_dynamics": {
+    "rev60": {
+      "target_rpm": -60.0,
+      "overshoot_10ms_rpm": 5.91796875,
+      "overshoot_estimator_rpm": 10.3125,
+      "within_3rpm_ms": null,
+      "observed_ms": 652
+    },
+    "revneg60": {
+      "target_rpm": 60.0,
+      "overshoot_10ms_rpm": 5.5517578125,
+      "overshoot_estimator_rpm": 12.7734375,
+      "within_3rpm_ms": null,
+      "observed_ms": 662
+    },
+    "spec360": {
+      "bin_hz": 1.3020833333333333,
+      "band_80_100_rms_rpm": 3.2157307171111524,
+      "band_peak_hz": 96.35416666666666,
+      "largest_ac_line_hz": 108.07291666666666
+    }
+  },
+  "candidate_current": {
+    "900": {
+      "frames": 64000,
+      "windows": 32,
+      "plateau_mean_rpm": 899.9997396738815,
+      "by_valid_phases": {
+        "1": {
+          "frames": 297,
+          "percent": 0.4640625,
+          "max_a": 0.3219915322580905,
+          "rms_a": 0.1279803745862476
+        },
+        "2": {
+          "frames": 51697,
+          "percent": 80.7765625,
+          "max_a": 0.7698591279308965,
+          "rms_a": 0.18950325586012937
+        },
+        "3": {
+          "frames": 12006,
+          "percent": 18.759375,
+          "max_a": 0.3232547146769773,
+          "rms_a": 0.12668602248573246
+        }
+      },
+      "worst": {
+        "mask": 3,
+        "frames": 342,
+        "samples": 4439480,
+        "sum_squares": 17.047189712524414,
+        "peak": 0.7698591279308965,
+        "id": 0.4600841701030731,
+        "iq": 0.6172565221786499,
+        "iq_target": 0.16041448712348938,
+        "raw_abc": [
+          -0.3472709357738495,
+          -0.4213981032371521,
+          0.15382739901542664
+        ],
+        "electrical_angle": 3.3141441345214844,
+        "bus": 19.294466018676758,
+        "ccr": [
+          2401,
+          273,
+          3726
+        ],
+        "angle_deg": 189.88647160611802,
+        "duty_percent": [
+          60.025,
+          6.825,
+          93.15
+        ],
+        "active_voltage_utilization": 0.8709960294589943
+      }
+    },
+    "-900": {
+      "frames": 64000,
+      "windows": 32,
+      "plateau_mean_rpm": -899.9984710428362,
+      "by_valid_phases": {
+        "1": {
+          "frames": 119,
+          "percent": 0.1859375,
+          "max_a": 0.25931530116056156,
+          "rms_a": 0.14447983384513044
+        },
+        "2": {
+          "frames": 52355,
+          "percent": 81.8046875,
+          "max_a": 0.7533383379899387,
+          "rms_a": 0.18926600805080007
+        },
+        "3": {
+          "frames": 11526,
+          "percent": 18.009375,
+          "max_a": 0.3651904115379645,
+          "rms_a": 0.12849905661255975
+        }
+      },
+      "worst": {
+        "mask": 5,
+        "frames": 658,
+        "samples": 5063004,
+        "sum_squares": 23.01608657836914,
+        "peak": 0.7533383379899387,
+        "id": 0.4539976418018341,
+        "iq": -0.6011695265769958,
+        "iq_target": -0.18691754341125488,
+        "raw_abc": [
+          -0.45467182993888855,
+          -0.4910903573036194,
+          -0.29285088181495667
+        ],
+        "electrical_angle": 3.142714500427246,
+        "bus": 19.24728775024414,
+        "ccr": [
+          1460,
+          3975,
+          24
+        ],
+        "angle_deg": 180.06427708904616,
+        "duty_percent": [
+          36.5,
+          99.375,
+          0.6
+        ],
+        "active_voltage_utilization": 0.9999525405404665
+      }
+    }
+  },
+  "excluded_incomplete_trials": [
+    {
+      "file": "asbuilt-peaks-pos900.json",
+      "error": "Inconsistent frozen SWD words at 0x200003b8",
+      "captures": 12,
+      "sha256": "f18b94332b676dbfa924bec65b1fa500f97dc8311d5afdecc9770d5be190bce4"
+    },
+    {
+      "file": "asbuilt-spectrum420-2.json",
+      "error": "Motor did not settle between trials",
+      "captures": 0,
+      "sha256": "4fbcf3c89139c1fa67b2193002a8528a241f6a8fde38776b4e4c7d537e41457e"
+    },
+    {
+      "file": "asbuilt-spectrum420.json",
+      "error": "SDO 60FF:0 timed out",
+      "captures": 1,
+      "sha256": "e14c419759de34e7c3b9e8c64c1d4a5c497b43b8dcb0e18e9147a4bc6c8037ae"
+    },
+    {
+      "file": "base-neg6.json",
+      "error": "SWD write failed: write_memory: failed to write memory",
+      "captures": 153,
+      "sha256": "37d1583178862d8e298d4ad1a61a10354b5824507d3049708c6339df117a0c0b"
+    },
+    {
+      "file": "control-neg6.json",
+      "error": "Trace was replaced or contains nonconsecutive samples",
+      "captures": 10,
+      "sha256": "670a3f262a08d7b999702253b21d4bb88345223dd46b2733350da5a8ac0ee6b9"
+    },
+    {
+      "file": "native-neg6.json",
+      "error": "Frozen SWD trace did not read back consistently",
+      "captures": 98,
+      "sha256": "af539b5d7dcd96fe2ea3e4098b3b0fa19b324a38014977d84478586ed9510616"
+    },
+    {
+      "file": "new-pos6.json",
+      "error": "SWD read at 0x20004930 failed: read_memory: failed to read memory",
+      "captures": 73,
+      "sha256": "96c8711752b6ce79c52ce321830c9fc3a3914d7a6e3cd9f64f624f246c870f7f"
+    },
+    {
+      "file": "reference-neg6.json",
+      "error": "Frozen SWD trace did not read back consistently",
+      "captures": 20,
+      "sha256": "f454ca2f27b0d337549b121bb32d12aa579e73b45058b8469cbf5217280a1180"
+    },
+    {
+      "file": "refined-pos6.json",
+      "error": "Trace ABI mismatch",
+      "captures": 50,
+      "sha256": "3800f9ba910ee34ca342cdbfd37824552a4177fa14b685ce6ec309f397a02301"
+    },
+    {
+      "file": "step-pos.json",
+      "error": "Encoder samples lost during response test",
+      "captures": 0,
+      "sha256": "b4c0eabddcd95f70bb15c0dfa3de131d2770a1d30a5f41617b433c2ae5c83a63"
+    }
+  ]
+}

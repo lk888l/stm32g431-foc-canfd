@@ -1,0 +1,1114 @@
+{
+  "date": "2026-11-17",
+  "supply_v_approx": 19.3,
+  "no_load": true,
+  "parameters": {
+    "velocity_window_s": 0.001,
+    "velocity_lowpass_s": 0.00025,
+    "velocity_kp_low": 0.03,
+    "velocity_kp_high": 0.06,
+    "velocity_ki": 3,
+    "position_kp": 20,
+    "current_pi_nominal_hz": 800,
+    "observer_ke_v_per_rad_s": 0.104,
+    "torque_interface_kt_nm_a": 0.23,
+    "cogging_rate_hz": 20000,
+    "cogging_full_below_rev_s": 1,
+    "cogging_zero_above_rev_s": 6
+  },
+  "comparisons": [
+    {
+      "baseline": {
+        "path": ".work/motor-performance-20261117/baseline-positive-01.json",
+        "sha256": "ea0a339e82158d47b8688128896197726f571558bb8a68643761740e12e047d0",
+        "target_rev_s": 0.1,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 7776,
+          "velocity_mean": 0.0972240012305119,
+          "velocity_std": 0.04739803137412843,
+          "velocity_error_rms": 0.0474792538621982,
+          "position_velocity_10ms_std": 0.03451496158981969,
+          "iq_error_rms": 0.013894787057992755,
+          "id_rms": 0.007441494692587252,
+          "current_peak": 0.196269908955139,
+          "current_limit_fraction": 0
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 6357
+      },
+      "final": {
+        "path": ".work/motor-performance-20261117/final-positive-01.json",
+        "sha256": "4e9a4c3f09b85082ba0becf1af7f83206ad6206f74cf2d50704dcf426dd31244",
+        "target_rev_s": 0.1,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 5088,
+          "velocity_mean": 0.10191472138657268,
+          "velocity_std": 0.029505799946423817,
+          "velocity_error_rms": 0.029567860735375876,
+          "position_velocity_10ms_std": 0.0198318748663631,
+          "iq_error_rms": 0.010465261176965899,
+          "id_rms": 0.008073493448784138,
+          "current_peak": 0.19613539216705472,
+          "current_limit_fraction": 0,
+          "voltage_utilization_mean": 0.022449927950969843,
+          "voltage_utilization_peak": 0.04753757101459397
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 7230
+      },
+      "position_velocity_ripple_reduction": 0.4254122284113281
+    },
+    {
+      "baseline": {
+        "path": ".work/motor-performance-20261117/baseline-negative-01.json",
+        "sha256": "2850d0559df374a752a4bcdd9eba69be9dfde2acf7ede0ddb59d515b4b8b4eb1",
+        "target_rev_s": -0.1,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 7680,
+          "velocity_mean": -0.09723051004017833,
+          "velocity_std": 0.04645895882200558,
+          "velocity_error_rms": 0.046541432395902506,
+          "position_velocity_10ms_std": 0.03390719910451381,
+          "iq_error_rms": 0.014084759715398331,
+          "id_rms": 0.007463486374687204,
+          "current_peak": 0.16310996204141998,
+          "current_limit_fraction": 0
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 6371
+      },
+      "final": {
+        "path": ".work/motor-performance-20261117/final-negative-01.json",
+        "sha256": "8d8d999ebe03b33e2b35f8ec42a9a837aaa86e17f61e64c8d26758c2d1d231a7",
+        "target_rev_s": -0.1,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 5472,
+          "velocity_mean": -0.10096779791508113,
+          "velocity_std": 0.029744674594665184,
+          "velocity_error_rms": 0.02976041497605428,
+          "position_velocity_10ms_std": 0.02096644731983005,
+          "iq_error_rms": 0.010487533291549327,
+          "id_rms": 0.00805772152247508,
+          "current_peak": 0.16538000729751723,
+          "current_limit_fraction": 0,
+          "voltage_utilization_mean": 0.0226036796056047,
+          "voltage_utilization_peak": 0.042561114271253794
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 7230
+      },
+      "position_velocity_ripple_reduction": 0.3816520422343306
+    },
+    {
+      "baseline": {
+        "path": ".work/motor-performance-20261117/baseline-positive-1.json",
+        "sha256": "28e3059f66686f6b01b5319de309932dcd451a9ae3526f64cf50f1fd468ce91a",
+        "target_rev_s": 1.0,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 1536,
+          "velocity_mean": 1.0000833750624831,
+          "velocity_std": 0.1106502149441934,
+          "velocity_error_rms": 0.11065024635579102,
+          "position_velocity_10ms_std": 0.0825179196729308,
+          "iq_error_rms": 0.022043943652380903,
+          "id_rms": 0.007852638024349887,
+          "current_peak": 0.21645903604766453,
+          "current_limit_fraction": 0
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 6371
+      },
+      "final": {
+        "path": ".work/motor-performance-20261117/final-positive-1.json",
+        "sha256": "9d93c497b033f4e435c2ec09eaed89707cef432dc0163951be1166addc001ff1",
+        "target_rev_s": 1.0,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 1920,
+          "velocity_mean": 0.997519904623429,
+          "velocity_std": 0.07506664497066547,
+          "velocity_error_rms": 0.07510760321185081,
+          "position_velocity_10ms_std": 0.041182859127630866,
+          "iq_error_rms": 0.01838538880246584,
+          "id_rms": 0.008661677290972957,
+          "current_peak": 0.21644253145409076,
+          "current_limit_fraction": 0,
+          "voltage_utilization_mean": 0.07875699193478886,
+          "voltage_utilization_peak": 0.09377654462375179
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 7230
+      },
+      "position_velocity_ripple_reduction": 0.5009222325179328
+    },
+    {
+      "baseline": {
+        "path": ".work/motor-performance-20261117/baseline-positive-3.json",
+        "sha256": "6999af1386494270bddb42471ba3441d66075caed9e90bdaad1a8c5edc51a089",
+        "target_rev_s": 3.0,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 1536,
+          "velocity_mean": 3.0008475108382604,
+          "velocity_std": 0.13070664365194207,
+          "velocity_error_rms": 0.13070939128225154,
+          "position_velocity_10ms_std": 0.09691337262998295,
+          "iq_error_rms": 0.027557179252845444,
+          "id_rms": 0.010452743037997985,
+          "current_peak": 0.2553871162430906,
+          "current_limit_fraction": 0
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 6371
+      },
+      "final": {
+        "path": ".work/motor-performance-20261117/final-positive-3.json",
+        "sha256": "e653a352a715e476f6f44c0e9e66550f160fd2251c0100c15f79c441a275086a",
+        "target_rev_s": 3.0,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 1824,
+          "velocity_mean": 3.0043884287016436,
+          "velocity_std": 0.10513908891773298,
+          "velocity_error_rms": 0.105230633966162,
+          "position_velocity_10ms_std": 0.04626895448265787,
+          "iq_error_rms": 0.023197097056501345,
+          "id_rms": 0.009369088557026596,
+          "current_peak": 0.29881664125385016,
+          "current_limit_fraction": 0,
+          "voltage_utilization_mean": 0.19129844320204162,
+          "voltage_utilization_peak": 0.2150249064838143
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 7230
+      },
+      "position_velocity_ripple_reduction": 0.5225740965664915
+    },
+    {
+      "baseline": {
+        "path": ".work/motor-performance-20261117/baseline-positive-6.json",
+        "sha256": "b012d5c65a51be2c2f2fe6d030c68b61f885c14ddc3dd8988c85073fd857dfe9",
+        "target_rev_s": 6.0,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 2566,
+          "velocity_mean": 5.9980673947932654,
+          "velocity_std": 0.12433650844821785,
+          "velocity_error_rms": 0.12435152711558811,
+          "position_velocity_10ms_std": 0.10363099978969054,
+          "iq_error_rms": 0.041685780522772865,
+          "id_rms": 0.022416975058206095,
+          "current_peak": 0.2766896305979131,
+          "current_limit_fraction": 0
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 6371
+      },
+      "final": {
+        "path": ".work/motor-performance-20261117/final-positive-6.json",
+        "sha256": "3f19225973683cda49d222e94bf281ff8912737905dcb804aa002ae190c7e411",
+        "target_rev_s": 6.0,
+        "current_limit_a": 0.3,
+        "completed": true,
+        "summary": {
+          "steady_samples": 1824,
+          "velocity_mean": 6.000206453235526,
+          "velocity_std": 0.12745322029795678,
+          "velocity_error_rms": 0.1274533875079747,
+          "position_velocity_10ms_std": 0.024473009913616187,
+          "iq_error_rms": 0.039034155311569084,
+          "id_rms": 0.0181394244229524,
+          "current_peak": 0.2983154020713089,
+          "current_limit_fraction": 0,
+          "voltage_utilization_mean": 0.37366889493700883,
+          "voltage_utilization_peak": 0.4032810878614064
+        },
+        "fault": 0,
+        "encoder_missed": 0,
+        "isr_max_cycles": 7230
+      },
+      "position_velocity_ripple_reduction": 0.7638446993343508
+    }
+  ],
+  "high_speed": [
+    {
+      "path": ".work/motor-performance-20261117/final-positive-14.json",
+      "sha256": "24578ae9d08a384c8253298177cf096d9f170a503baa2ab397a9cf261be011f8",
+      "target_rev_s": 14.0,
+      "current_limit_a": 0.3,
+      "completed": true,
+      "summary": {
+        "steady_samples": 4032,
+        "velocity_mean": 13.999301135303481,
+        "velocity_std": 0.12517969413240415,
+        "velocity_error_rms": 0.12518164496021889,
+        "position_velocity_10ms_std": 0.0792177300337918,
+        "iq_error_rms": 0.06764174016069635,
+        "id_rms": 0.09974700613628827,
+        "current_peak": 0.3640097912846741,
+        "current_limit_fraction": 0,
+        "voltage_utilization_mean": 0.8376248787527028,
+        "voltage_utilization_peak": 0.9004919031948376
+      },
+      "fault": 0,
+      "encoder_missed": 0,
+      "isr_max_cycles": 6950
+    },
+    {
+      "path": ".work/motor-performance-20261117/final-negative-14.json",
+      "sha256": "d7dfeae5e515da2a4652d74a3f00dece829dea3c07cef82c983a7f5c53adc590",
+      "target_rev_s": -14.0,
+      "current_limit_a": 0.3,
+      "completed": true,
+      "summary": {
+        "steady_samples": 3936,
+        "velocity_mean": -13.998101452986399,
+        "velocity_std": 0.12331483203262263,
+        "velocity_error_rms": 0.12332944611890861,
+        "position_velocity_10ms_std": 0.08069529811381317,
+        "iq_error_rms": 0.06583113670949457,
+        "id_rms": 0.10315095015018,
+        "current_peak": 0.3887140607557634,
+        "current_limit_fraction": 0,
+        "voltage_utilization_mean": 0.8458415190837411,
+        "voltage_utilization_peak": 0.8959757174414874
+      },
+      "fault": 0,
+      "encoder_missed": 0,
+      "isr_max_cycles": 6950
+    },
+    {
+      "path": ".work/motor-performance-20261117/final-positive-15-limit05.json",
+      "sha256": "fe1e9c5bf059fd315cf0ac0e815c01e9363e979e23426dd98954e4a39d904b7f",
+      "target_rev_s": 15.0,
+      "current_limit_a": 0.5,
+      "completed": true,
+      "summary": {
+        "steady_samples": 4713,
+        "velocity_mean": 15.000506903901112,
+        "velocity_std": 0.1320657302249164,
+        "velocity_error_rms": 0.13206670303829562,
+        "position_velocity_10ms_std": 0.09106637966157399,
+        "iq_error_rms": 0.07951346444654585,
+        "id_rms": 0.11681713027683063,
+        "current_peak": 0.6500790306666873,
+        "current_limit_fraction": 0,
+        "voltage_utilization_mean": 0.8968226156889927,
+        "voltage_utilization_peak": 0.9560236936845803
+      },
+      "fault": 0,
+      "encoder_missed": 0,
+      "isr_max_cycles": 6950
+    },
+    {
+      "path": ".work/motor-performance-20261117/final-negative-15-limit05.json",
+      "sha256": "f657ea56c796b522f879342220f8775fbeed0883cdc36230d0ffa2631bb5a860",
+      "target_rev_s": -15.0,
+      "current_limit_a": 0.5,
+      "completed": true,
+      "summary": {
+        "steady_samples": 4896,
+        "velocity_mean": -14.999755564273572,
+        "velocity_std": 0.1306857358744273,
+        "velocity_error_rms": 0.13068596447157182,
+        "position_velocity_10ms_std": 0.09133516504715686,
+        "iq_error_rms": 0.07753866195443246,
+        "id_rms": 0.11515829933752238,
+        "current_peak": 0.5447941467595031,
+        "current_limit_fraction": 0,
+        "voltage_utilization_mean": 0.9069282203642411,
+        "voltage_utilization_peak": 0.956990745296319
+      },
+      "fault": 0,
+      "encoder_missed": 0,
+      "isr_max_cycles": 6950
+    }
+  ],
+  "positions": {
+    "baseline": {
+      "path": ".work/motor-performance-20261117/baseline-positions.json",
+      "sha256": "3547849b68765eff1eec01f1470b69d11bdd130f077e168232f1ef643696257e",
+      "completed": false,
+      "error": "Position holding failed (2 degrees / 0.1 rev/s RMS)",
+      "trials": [
+        {
+          "angle_rev": 0.0,
+          "samples": 547,
+          "error_mean_deg": -0.09584196566534271,
+          "error_max_deg": 0.10985676432028413,
+          "position_peak_to_peak_deg": 0.021965887863188982,
+          "velocity_rms": 0.0010615354707225605
+        },
+        {
+          "angle_rev": 0.0625,
+          "samples": 576,
+          "error_mean_deg": 0.1007080078125,
+          "error_max_deg": 0.24169921875,
+          "position_peak_to_peak_deg": 0.2197265625,
+          "velocity_rms": 0.004521359605391264
+        },
+        {
+          "angle_rev": 0.125,
+          "samples": 511,
+          "error_mean_deg": 0.0735718490092955,
+          "error_max_deg": 0.32958984375,
+          "position_peak_to_peak_deg": 0.50537109375,
+          "velocity_rms": 0.18720420447480512
+        }
+      ]
+    },
+    "final": {
+      "path": ".work/motor-performance-20261117/final-positions.json",
+      "sha256": "2a28ec2567420b7fb2658fbf2b836700f80c97cb23754a11293369ea2b453675",
+      "completed": true,
+      "error": null,
+      "trials": [
+        {
+          "angle_rev": 0.0,
+          "samples": 515,
+          "error_mean_deg": 0.005589161104368932,
+          "error_max_deg": 0.02197265625,
+          "position_peak_to_peak_deg": 0.02197265625,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.0625,
+          "samples": 513,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.125,
+          "samples": 480,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.1875,
+          "samples": 565,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.25,
+          "samples": 522,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.3125,
+          "samples": 480,
+          "error_mean_deg": -0.0120391845703125,
+          "error_max_deg": 0.02197265625,
+          "position_peak_to_peak_deg": 0.02197265625,
+          "velocity_rms": 0.0034547213561617997
+        },
+        {
+          "angle_rev": 0.375,
+          "samples": 536,
+          "error_mean_deg": -0.0007378877098880597,
+          "error_max_deg": 0.02197265625,
+          "position_peak_to_peak_deg": 0.02197265625,
+          "velocity_rms": 0.00188405451991036
+        },
+        {
+          "angle_rev": 0.4375,
+          "samples": 510,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.5,
+          "samples": 507,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.5625,
+          "samples": 510,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.625,
+          "samples": 480,
+          "error_mean_deg": -0.008331298828125,
+          "error_max_deg": 0.02197265625,
+          "position_peak_to_peak_deg": 0.02197265625,
+          "velocity_rms": 0.0027645869434748255
+        },
+        {
+          "angle_rev": 0.6875,
+          "samples": 480,
+          "error_mean_deg": 2.1457672119140625e-05,
+          "error_max_deg": 2.1457672119140625e-05,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.75,
+          "samples": 551,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.8125,
+          "samples": 496,
+          "error_mean_deg": 0.00048712376625307147,
+          "error_max_deg": 0.04392385482788086,
+          "position_peak_to_peak_deg": 0.06589651107788086,
+          "velocity_rms": 0.010178766060782142
+        },
+        {
+          "angle_rev": 0.875,
+          "samples": 505,
+          "error_mean_deg": 0.0,
+          "error_max_deg": 0.0,
+          "position_peak_to_peak_deg": 0.0,
+          "velocity_rms": 0.0
+        },
+        {
+          "angle_rev": 0.9375,
+          "samples": 573,
+          "error_mean_deg": -0.007247525359947644,
+          "error_max_deg": 0.02197265625,
+          "position_peak_to_peak_deg": 0.02197265625,
+          "velocity_rms": 0.002039657892365208
+        }
+      ]
+    }
+  },
+  "acceptance": {
+    "path": ".work/motor-performance-20261117/final-acceptance.json",
+    "sha256": "942fdac444a5a0f7424e3a5f8d1c0a9b9e0c5e346468002fdd045b7b776a6e7a",
+    "completed": true,
+    "trials": [
+      {
+        "command": {
+          "operation": "velocity",
+          "target": 0.1,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 88,
+          "steady_samples": 24,
+          "velocity_mean": 0.09455111079538862,
+          "velocity_std": 0.026941755508980085,
+          "current_peak": 0.1726345419883728,
+          "target": 0.1,
+          "mean_error": -0.005448889204611382,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "velocity",
+          "target": -0.1,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 68,
+          "steady_samples": 32,
+          "velocity_mean": -0.10165829106699675,
+          "velocity_std": 0.0306084334520386,
+          "current_peak": 0.13156618177890778,
+          "target": -0.1,
+          "mean_error": -0.0016582910669967477,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "velocity",
+          "target": 0.5,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 90,
+          "steady_samples": 33,
+          "velocity_mean": 0.5119920138156775,
+          "velocity_std": 0.04873969738947535,
+          "current_peak": 0.17567408084869385,
+          "target": 0.5,
+          "mean_error": 0.011992013815677494,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "velocity",
+          "target": -0.5,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 95,
+          "steady_samples": 34,
+          "velocity_mean": -0.4944680613629958,
+          "velocity_std": 0.04071898376436846,
+          "current_peak": 0.14614486694335938,
+          "target": -0.5,
+          "mean_error": 0.005531938637004186,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "position",
+          "target": 0.125,
+          "relative": true,
+          "speed": 0.5,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 26,
+          "steady_samples": 9,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.07570205628871918,
+          "target": 1.08197021484375,
+          "position_error_max": 0.00067138671875,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "position",
+          "target": -0.125,
+          "relative": true,
+          "speed": 0.5,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 44,
+          "steady_samples": 17,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.10085223615169525,
+          "target": 0.95819091796875,
+          "position_error_max": 0.000244140625,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "multi-position",
+          "target": 1.25,
+          "relative": true,
+          "speed": 0.5,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 45,
+          "steady_samples": 17,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.12050911039113998,
+          "target": 2.20819091796875,
+          "position_error_max": 0.000244140625,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "multi-position",
+          "target": -1.25,
+          "relative": true,
+          "speed": 0.5,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 45,
+          "steady_samples": 16,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.1493425816297531,
+          "target": 0.95751953125,
+          "position_error_max": 0.00030517578125,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "mit",
+          "position": 0.08,
+          "relative": true,
+          "velocity": 0,
+          "torque": 0,
+          "kp": 1.0,
+          "kd": 0.08,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 45,
+          "steady_samples": 16,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.15354005992412567,
+          "target": 1.03819091796875,
+          "position_error_max": 0.014631347656250071,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "mit",
+          "position": -0.08,
+          "relative": true,
+          "velocity": 0,
+          "torque": 0,
+          "kp": 1.0,
+          "kd": 0.08,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 42,
+          "steady_samples": 16,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.10794667154550552,
+          "target": 0.9435595703125,
+          "position_error_max": 0.00038330078125003997,
+          "passed": true
+        }
+      }
+    ]
+  },
+  "mit_gain_comparison": {
+    "path": ".work/motor-performance-20261117/mit-gain-comparison.json",
+    "sha256": "5d68a2ae4598bfb0be9b4be00a7c144c2b2ae3c477c0de2c6755f31abe7f6333",
+    "completed": true,
+    "trials": [
+      {
+        "command": {
+          "operation": "mit",
+          "position": 0.08,
+          "relative": true,
+          "velocity": 0,
+          "torque": 0,
+          "kp": 1,
+          "kd": 0.08,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 46,
+          "steady_samples": 16,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.15478268265724182,
+          "target": 102.03831298828125,
+          "position_error_max": 0.014692382812498295,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "mit",
+          "position": 0.08,
+          "relative": true,
+          "velocity": 0,
+          "torque": 0,
+          "kp": 3,
+          "kd": 0.04,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 48,
+          "steady_samples": 18,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.03950600326061249,
+          "target": 102.0383740234375,
+          "position_error_max": 0.0037670898437482947,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "mit",
+          "position": -0.08,
+          "relative": true,
+          "velocity": 0,
+          "torque": 0,
+          "kp": 1,
+          "kd": 0.08,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 59,
+          "steady_samples": 21,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.10091602802276611,
+          "target": 101.9618701171875,
+          "position_error_max": 0.0015505981445329553,
+          "passed": true
+        }
+      },
+      {
+        "command": {
+          "operation": "mit",
+          "position": -0.08,
+          "relative": true,
+          "velocity": 0,
+          "torque": 0,
+          "kp": 3,
+          "kd": 0.04,
+          "seconds": 5,
+          "current_limit": 0.3
+        },
+        "summary": {
+          "samples": 65,
+          "steady_samples": 23,
+          "velocity_mean": 0.0,
+          "velocity_std": 0.0,
+          "current_peak": 0.038108065724372864,
+          "target": 101.96150390625,
+          "position_error_max": 0.0007571411132829553,
+          "passed": true
+        }
+      }
+    ]
+  },
+  "back_emf_fit": {
+    "groups": [
+      {
+        "path": ".work/motor-performance-20261117/scheduled3-positive-6.json",
+        "sha256": "4397db6a1a2daf384045df9175a8b2477d37c5470a2e982e24d7b9cdc4fb5110",
+        "points": 22,
+        "omega": 37.39841020860226,
+        "emf": 4.016846657362841
+      },
+      {
+        "path": ".work/motor-performance-20261117/scheduled3-positive-9.json",
+        "sha256": "901e76126961c48ab9984badd289ff29f56e181180e9290971d9226156da2fa2",
+        "points": 34,
+        "omega": 56.54698486221008,
+        "emf": 5.956768790449917
+      },
+      {
+        "path": ".work/motor-performance-20261117/current800-positive-12.json",
+        "sha256": "386d980e9ecd071576e15d8a96e6cfa8367bb0f96a2219dfb76706084cea23eb",
+        "points": 36,
+        "omega": 75.28119173784178,
+        "emf": 7.945491020972547
+      },
+      {
+        "path": ".work/motor-performance-20261117/current800-negative-6.json",
+        "sha256": "dda6219ed847b663bf89649dee22c040072a08211b4cbe6df5f5a127f3399c28",
+        "points": 27,
+        "omega": -37.70839573360258,
+        "emf": -4.019048653441905
+      },
+      {
+        "path": ".work/motor-performance-20261117/current800-negative-12.json",
+        "sha256": "dcf6aec1672a30ee9f51d5896b05d3b43b585182fe9e2a5cb97a5345dead0ab2",
+        "points": 37,
+        "omega": -75.43684787133108,
+        "emf": -7.941599021585537
+      }
+    ],
+    "ke_v_per_mechanical_rad_s": 0.10383031210774016,
+    "odd_voltage_offset": 0.11219977230721057,
+    "residual_rms_v": 0.017568342859160157,
+    "resistance_ohm": 1.8,
+    "inductance_h": 0.0004333333333333333,
+    "voltage_angle_delay_s": 0.00013
+  },
+  "rejected_trials": [
+    {
+      "file": "baseline-positions.json",
+      "error": "Position holding failed (2 degrees / 0.1 rev/s RMS)",
+      "completed": false
+    },
+    {
+      "file": "current800-positive-15.json",
+      "error": "Trace trial exceeded motion/current bounds",
+      "completed": false
+    },
+    {
+      "file": "final-positive-15.json",
+      "error": "Trace trial exceeded motion/current bounds",
+      "completed": false
+    },
+    {
+      "file": "final-taper-positive-15.json",
+      "error": "Trace trial exceeded motion/current bounds",
+      "completed": false
+    },
+    {
+      "file": "pi06-2-positive-01.json",
+      "error": "Motor did not settle during ramp-down",
+      "completed": false
+    },
+    {
+      "file": "pi08-2-positive-01.json",
+      "error": "Motor did not settle during ramp-down",
+      "completed": false
+    },
+    {
+      "file": "window06-2-positive-01.json",
+      "error": "Motor did not settle during ramp-down",
+      "completed": false
+    }
+  ],
+  "validation": {
+    "host_ctest": 3,
+    "python_unittest": 48,
+    "builds": [
+      "Bench",
+      "Bringup",
+      "Debug",
+      "Release"
+    ],
+    "bench_ram_bytes": 30256,
+    "release_ram_bytes": 27648,
+    "isr_max_cycles": 7233,
+    "isr_max_us": 45.20625
+  },
+  "final_verification": {
+    "program_matches": true,
+    "binary_sha256": "e4fb387c7a8de5a0b105aff4e6dcf385ad707b4eace1e275277398c2c3f5cba5",
+    "parameters_unchanged": true,
+    "parameters_sha256": "dc29ddc4ce88882db952ac0945c804e4207f3bd7c52d753ed5ba18811600ef24",
+    "before_reset": {
+      "samples": 14408480,
+      "status": 704,
+      "fault": 0,
+      "calibration": 4,
+      "pole_pairs": 11,
+      "direction": 1,
+      "bus": 19.356428146362305,
+      "temperature": 33.0,
+      "position": 101.959716796875,
+      "velocity": 0.0,
+      "id": -1.401298464324817e-45,
+      "iq": 4.203895392974451e-45,
+      "ia": -2.802596928649634e-45,
+      "ib": 4.203895392974451e-45,
+      "ic": -1.401298464324817e-45,
+      "current_limit": 1.399999976158142,
+      "kt": 0.23000000417232513,
+      "offset": 3.1301207542419434,
+      "outputs": 0,
+      "sample_max": 1843,
+      "control_max": 5185,
+      "apply_max": 461,
+      "total_max": 6754,
+      "interval_min": 7932,
+      "interval_max": 8068,
+      "isr_max": 7233,
+      "sampling_epoch": 1,
+      "cordic_max_error": 1.430511474609375e-06,
+      "warnings": 2,
+      "encoder_missed": 0,
+      "current_predicted": 10156306,
+      "calibration_reason": 0,
+      "calibration_ticks": 0,
+      "calibration_points": 0,
+      "calibration_concentration": 0.0,
+      "calibration_travel": 0.0,
+      "iq_target": 0.0,
+      "offsets_valid": 1,
+      "zero_state": 1,
+      "zero_reason": 0,
+      "zero_span": 14,
+      "driver_awake": 0,
+      "pwm_channels": 0,
+      "no_motion": 0,
+      "calibration_angle": 0.0,
+      "voltage_a": 0.0,
+      "voltage_b": 0.0,
+      "voltage_c": 0.0
+    },
+    "after_reset": {
+      "samples": 11160,
+      "status": 704,
+      "fault": 0,
+      "calibration": 4,
+      "pole_pairs": 11,
+      "direction": 1,
+      "bus": 19.249731063842773,
+      "temperature": 32.0,
+      "position": 0.9597167372703552,
+      "velocity": 0.0,
+      "id": 4.203895392974451e-45,
+      "iq": 1.401298464324817e-45,
+      "ia": 2.802596928649634e-45,
+      "ib": 1.401298464324817e-45,
+      "ic": -4.203895392974451e-45,
+      "current_limit": 1.399999976158142,
+      "kt": 0.23000000417232513,
+      "offset": 3.1301207542419434,
+      "outputs": 0,
+      "sample_max": 1843,
+      "control_max": 2883,
+      "apply_max": 443,
+      "total_max": 4264,
+      "interval_min": 7939,
+      "interval_max": 8055,
+      "isr_max": 4443,
+      "sampling_epoch": 1,
+      "cordic_max_error": 1.430511474609375e-06,
+      "warnings": 2,
+      "encoder_missed": 0,
+      "current_predicted": 11159,
+      "calibration_reason": 0,
+      "calibration_ticks": 0,
+      "calibration_points": 0,
+      "calibration_concentration": 0.0,
+      "calibration_travel": 0.0,
+      "iq_target": 0.0,
+      "offsets_valid": 1,
+      "zero_state": 1,
+      "zero_reason": 0,
+      "zero_span": 12,
+      "driver_awake": 0,
+      "pwm_channels": 0,
+      "no_motion": 0,
+      "calibration_angle": 0.0,
+      "voltage_a": 0.0,
+      "voltage_b": 0.0,
+      "voltage_c": 0.0
+    },
+    "final": {
+      "samples": 17840,
+      "status": 704,
+      "fault": 0,
+      "calibration": 4,
+      "pole_pairs": 11,
+      "direction": 1,
+      "bus": 19.36531639099121,
+      "temperature": 32.0,
+      "position": 0.9597167372703552,
+      "velocity": 0.0,
+      "id": 4.203895392974451e-45,
+      "iq": 1.401298464324817e-45,
+      "ia": 2.802596928649634e-45,
+      "ib": 1.401298464324817e-45,
+      "ic": -4.203895392974451e-45,
+      "current_limit": 1.399999976158142,
+      "kt": 0.23000000417232513,
+      "offset": 3.1301207542419434,
+      "outputs": 0,
+      "sample_max": 1843,
+      "control_max": 2883,
+      "apply_max": 443,
+      "total_max": 4264,
+      "interval_min": 7939,
+      "interval_max": 8055,
+      "isr_max": 4443,
+      "sampling_epoch": 1,
+      "cordic_max_error": 1.430511474609375e-06,
+      "warnings": 2,
+      "encoder_missed": 0,
+      "current_predicted": 17839,
+      "calibration_reason": 0,
+      "calibration_ticks": 0,
+      "calibration_points": 0,
+      "calibration_concentration": 0.0,
+      "calibration_travel": 0.0,
+      "iq_target": 0.0,
+      "offsets_valid": 1,
+      "zero_state": 1,
+      "zero_reason": 0,
+      "zero_span": 12,
+      "driver_awake": 0,
+      "pwm_channels": 0,
+      "no_motion": 0,
+      "calibration_angle": 0.0,
+      "voltage_a": 0.0,
+      "voltage_b": 0.0,
+      "voltage_c": 0.0
+    },
+    "hardware": {
+      "sequence": 45044,
+      "frames": 22522,
+      "encoder_frames": 22523,
+      "encoder_errors": 0,
+      "encoder_raw": 16101408,
+      "encoder_status": 0,
+      "adc_a": 3412,
+      "adc_b": 3524,
+      "adc_c": 3624,
+      "adc_bus": 2178,
+      "adc_ntc": 1928,
+      "current_mask": 0,
+      "adc_errors": 0,
+      "missed_frames": 0,
+      "angle": 6.030078411102295,
+      "bus": 19.36531639099121,
+      "vdda": 3.309999942779541,
+      "temperature": 32.0,
+      "offset_a": 2043.212890625,
+      "offset_b": 2044.966796875,
+      "offset_c": 2046.30078125,
+      "offsets_valid": 1,
+      "driver_awake": 0,
+      "no_motion": 0,
+      "pwm_deferred": 0,
+      "warnings": 2,
+      "can_loopback": 0,
+      "zero_state": 1,
+      "zero_reason": 0,
+      "zero_span": 12,
+      "zero_elapsed": 1024,
+      "gpio_b_odr": 0,
+      "timer_ccer": 4096,
+      "gpio_a_mode": 1810563071,
+      "gpio_a_odr": 32768,
+      "elapsed": 27636.953
+    }
+  }
+}

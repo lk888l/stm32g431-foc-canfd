@@ -13,6 +13,8 @@ RollerCanTransport transport() noexcept;
 bool receive(RollerCanFrame& frame) noexcept;
 void publish(const drive::Telemetry& telemetry, std::uint32_t isr_max, std::uint32_t epoch) noexcept;
 void sampling_restart() noexcept;
+void trace(const drive::Controller& controller, const drive::Command& command, const drive::Sample& sample,
+           const std::array<std::uint16_t, 3>& duty) noexcept;
 void record(std::uint32_t begin, std::uint32_t sampled, std::uint32_t controlled,
             std::uint32_t applied) noexcept;
 } // namespace roller::bench
